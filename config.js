@@ -15,6 +15,6 @@
      ・スコープは drive.readonly の1つだけ
    ══════════════════════════════════════════════════════════════ */
 window.VIEWER_CONFIG = {
-  CLIENT_ID: '',
+  CLIENT_ID: '415008889657-1lpo1jinc0pfjom6mc0rfjdg87ihvv4l.apps.googleusercontent.com',
   SCOPE: 'https://www.googleapis.com/auth/drive.readonly'
 };

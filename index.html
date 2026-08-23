@@ -78,7 +78,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0823e</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0823g</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -304,8 +304,59 @@ addEventListener('drop', e => {
       権限を持っていなければ 403 になる。このページは権限を足さない。
    ⚠️ トークンは**この場だけ**（変数に持つだけ。保存しない）。 */
 const CFG = (window.VIEWER_CONFIG || {});
-const hashId = (location.hash.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+let hashId = (location.hash.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+/* ★誰が開いているか（plm-gas が渡す）。**アカウント選択を出さないため**に使う。
+   ⚠️ `#` の後ろなのでサーバには送られない。⚠️ 無くても動く（選択が出るだけ）。 */
+let hashHint = decodeURIComponent((location.hash.match(/(?:^|[#&])hint=([^&]+)/) || [])[1] || '');
 let token = '';
+let reauthed = false;      /* ★401 での取り直しは1回だけ（飛び続けないため）*/
+
+/* ══ ページごと飛んで戻る方式（ポップアップを使わない）════════════════
+   🔴 **これが `#id=` で開いたときの本線。** ポップアップ方式は控えに回した。
+
+   理由：`requestAccessToken()` は **必ずポップアップを開く**（`prompt:''` でも）。
+   iOS Safari は**タップと紐づかない**ポップアップを止めるので、
+   自動で読み込もうとすると必ず確認が出る。**タップを挟めば出ないが、毎回1回押す。**
+   ⇒ ページごと Google へ飛んで戻れば、**ポップアップもタップも要らない**。
+      許可済み・ログイン中なら Google は**画面を出さずに**戻してくる。
+
+   ⚠️ **`state` に id と hint を入れて持ち回る。** 飛んでいる間 `#id=` は消えるので、
+      戻ってから復元する。★`state` はエラーのときも返ってくるので、
+      **「もう試した」の印もここに入れる**（`r`）。無限に飛び続けないため。
+   ⚠️ **戻ってきたらトークンを URL から消す**（`history.replaceState`）。
+      履歴・共有に残さない。
+   ⚠️ **`REDIRECT_URI` は Google Cloud に登録した文字列と1文字も違えられない。**
+      違うと Google のエラー画面が出る（こちらには戻ってこないので拾えない）。 */
+const REDIR = CFG.REDIRECT_URI || '';
+function b64u(o){
+  return btoa(JSON.stringify(o)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function unb64u(t){
+  try { return JSON.parse(atob(String(t||'').replace(/-/g,'+').replace(/_/g,'/'))); }
+  catch(e){ return {}; }
+}
+/** Google へ飛ぶ。`mode='none'` は「画面を出さずに済むならそのまま戻して」*/
+function authGo(id, hint, mode){
+  const p = new URLSearchParams({
+    client_id: CFG.CLIENT_ID,
+    redirect_uri: REDIR,
+    response_type: 'token',
+    scope: CFG.SCOPE,
+    include_granted_scopes: 'true',
+    state: b64u({ id: id || '', hint: hint || '', r: (mode === 'none' ? 0 : 1) })
+  });
+  if (mode === 'none') p.set('prompt', 'none');
+  if (hint) p.set('login_hint', hint);
+  location.replace('https://accounts.google.com/o/oauth2/v2/auth?' + p.toString());
+}
+/** 戻ってきたか。★トークンでもエラーでも `state` は返ってくる */
+function authBack(){
+  const h = location.hash.replace(/^#/, '');
+  if (!/(^|&)access_token=|(^|&)error=/.test(h)) return null;
+  const q = new URLSearchParams(h);
+  return { tk: q.get('access_token') || '', err: q.get('error') || '',
+           st: unb64u(q.get('state')) };
+}
 
 function gisReady(){
   return !!(window.google && google.accounts && google.accounts.oauth2);
@@ -375,7 +426,12 @@ async function getToken(){
   if (token) return token;
   if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
   await gisWait();                                  /* ★在るまで待つ（上のコメント）*/
-  return reqToken();
+  /* ★`hint` を渡すと**アカウント選択が出ない**（`prompt:''` と組で効く）。
+     ⚠️ 別の垢で開きたい人が居るので、hint で失敗したら hint 無しでやり直す
+        （hint の垢でログインしていないと `prompt:''` では通らない）。 */
+  if (!hashHint) return reqToken();
+  try { return await reqToken({ hint: hashHint }); }
+  catch (e) { return await reqToken(); }
 }
 
 async function openDrive(id){
@@ -390,6 +446,14 @@ async function openDrive(id){
     const meta = await fetch('https://www.googleapis.com/drive/v3/files/' +
       encodeURIComponent(id) + '?fields=name,size,mimeType', {
         headers: { Authorization: 'Bearer ' + tk } });
+    if (meta.status === 401 && !reauthed && REDIR) {
+      /* ★トークンが切れた（約1時間）。**画面を出さずに取り直せる**ので飛ぶ。
+         ⚠️ 1回だけ（`reauthed`）。取り直しても 401 なら本当の権限の話。 */
+      reauthed = true; token = '';
+      log('トークンが切れていたので取り直します…');
+      authGo(id, hashHint, 'none');
+      return;
+    }
     if (!meta.ok) {
       /* ⚠️ 403 と 404 を同じ文言にしない（直し方が違う）*/
       driveOut(id, meta.status === 403
@@ -440,6 +504,21 @@ function tapToLoad(id){
   ph.style.display = '';
   document.getElementById('rt').onclick = () => { openDrive(id); };
 }
+/** 🔴 `prompt=none` で通らなかったとき＝**同意かログインが必要**。
+    ⚠️ **「失敗した」と書かない。** 一度許可すれば以後は画面が出ないので、そう書く。
+    ⚠️ ここも**ページごと飛ぶ**（ポップアップを使わない）。 */
+function consentGo(id, hint, err){
+  const why = /login_required/.test(err) ? 'Google にログインが必要です'
+            : /consent_required|interaction_required/.test(err) ? 'このページに Drive を読む許可が必要です'
+            : 'Google の確認が必要です' + (err ? '（' + err + '）' : '');
+  const ph = document.getElementById('ph');
+  ph.innerHTML = '<b>' + why + '</b><span>' +
+    '下のボタンを押すと Google の画面に進みます。' +
+    '<br><b>一度許可すれば、以後は画面が出ずに開きます。</b>' +
+    '<br><button class="pri" id="rt">Google の画面へ進む</button></span>';
+  ph.style.display = '';
+  document.getElementById('rt').onclick = () => { authGo(id, hint, 'consent'); };
+}
 /** 「もう一度」だけを出す枠。★Drive へ逃がすのは driveOut、やり直しはこちら。
     ⚠️ `login` のときは文言を変える（「失敗した」ではなく「押せば開く」）。 */
 function retryOut(id, why, login){
@@ -463,16 +542,41 @@ if (CFG.CLIENT_ID) {
     if (!m) { log('✗ ファイルIDが読み取れませんでした', 'ng'); return; }
     openDrive(m[m.length > 1 ? 1 : 0]);
   };
-  if (hashId) {
-    /* 🔴 **自動で読み込まない。タップを待つ。**
-       GIS の `requestAccessToken()` は**必ずポップアップを開く**（`prompt:''` は
-       ポップアップ**の中**の同意画面を省くだけで、窓そのものは開く）。
-       Safari は**ユーザー操作と紐づかない**ポップアップを止めて
-       「このサイトではポップアップウインドウが開きます」と毎回聞く。
-       ⇒ **黙って試す経路は存在しない。** 読み込みはタップの中から始める。
-       ⚠️ **自動要求に戻さないこと。** 一見親切だが、毎回あの確認が出る。
-       ★`plm-gas` から来た人はここで1回押す。押した先は
-         （既に許可済みなら）画面が出ずに読み込みが始まる。 */
+  /* ══ ここが入口の分岐 ══════════════════════════════════════════
+     ① Google から戻ってきた（`#access_token=` か `#error=`）→ トークンを取って読む
+     ② `#id=` で来た ＋ `REDIRECT_URI` 在り → **ページごと飛ぶ**（タップ0回）
+     ③ `#id=` で来た ＋ `REDIRECT_URI` 無し → タップを待つ（ポップアップ方式）
+     ⚠️ ②で戻ってこられなかったとき（`prompt=none` が通らない）は③に落とす。
+        **黙って飛び続けない**（`state.r` で1回だけと決めている）。 */
+  const back = authBack();
+  if (back) {
+    const bid  = String(back.st.id || '');
+    const bhint = String(back.st.hint || '');
+    /* ★トークンを URL から消す。★`#id=` は残す（そのままリロードできるように）*/
+    history.replaceState(null, '', location.pathname +
+      (bid ? '#id=' + encodeURIComponent(bid) +
+             (bhint ? '&hint=' + encodeURIComponent(bhint) : '') : ''));
+    hashId = bid; hashHint = bhint;
+    document.getElementById('pick').classList.remove('pri');
+    if (back.tk) {
+      token = back.tk;                              /* ★これで画面は出ない */
+      if (bid) openDrive(bid);
+      else log('✓ Google の許可は取れましたが、読むファイルが指定されていません', 'wa');
+    } else if (back.st.r) {
+      /* 2度目も駄目だった → ポップアップ方式のボタンを出す（行き止まりにしない）*/
+      log('✗ Google の許可が取れませんでした（' + back.err + '）', 'ng');
+      if (bid) retryOut(bid, 'Google の許可が取れませんでした（' + back.err + '）', true);
+    } else {
+      /* `prompt=none` で通らなかった＝**同意かログインが必要**。
+         ⚠️ これは失敗ではない。**進む道を出す**（押せばページごと飛ぶ）。 */
+      consentGo(bid, bhint, back.err);
+    }
+  } else if (hashId && REDIR) {
+    /* ★画面を出さずに戻せるならそのまま戻ってくる（タップ0回）*/
+    authGo(hashId, hashHint, 'none');
+  } else if (hashId) {
+    /* ⚠️ `REDIRECT_URI` を入れていないときだけここに来る（ポップアップ方式）。
+       ★自動要求に戻さないこと。毎回 Safari の確認が出る。 */
     document.getElementById('pick').classList.remove('pri');
     tapToLoad(hashId);
   }

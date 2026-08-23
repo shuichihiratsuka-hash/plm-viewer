@@ -14,7 +14,17 @@
        （★ドメインだけ。パスや末尾の / を付けると弾かれる）
      ・スコープは drive.readonly の1つだけ
    ══════════════════════════════════════════════════════════════ */
+/* REDIRECT_URI … ★**ページごと Google へ飛んで戻る**方式で使う（ポップアップを使わない）。
+     これを空にすると、ポップアップ方式（1回タップ）に落ちる。
+   🔴 **入れる前に Google Cloud で登録すること。**
+      クライアントID の画面 →「承認済みのリダイレクト URI」に**同じ文字列**を足す。
+      ⚠️ 1文字でも違うと Google のエラー画面（`redirect_uri_mismatch`）が出る。
+         末尾の `/` まで一致させる。
+   ⚠️ 「JavaScript 生成元」（ドメインだけ）とは**別の欄**。両方要る。
+   ★なぜこの方式か：`requestAccessToken()` は必ずポップアップを開き、iOS Safari は
+     タップと紐づかないポップアップを止める。ページごと飛べばポップアップが要らない。 */
 window.VIEWER_CONFIG = {
   CLIENT_ID: '415008889657-1lpo1jinc0pfjom6mc0rfjdg87ihvv4l.apps.googleusercontent.com',
-  SCOPE: 'https://www.googleapis.com/auth/drive.readonly'
+  SCOPE: 'https://www.googleapis.com/auth/drive.readonly',
+  REDIRECT_URI: 'https://shuichihiratsuka-hash.github.io/plm-viewer/'
 };

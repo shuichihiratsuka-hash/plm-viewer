@@ -330,21 +330,44 @@ function gisWait(ms){
   });
 }
 /** 権限をもらう。★押したときだけ出す（勝手にログイン画面を出さない）*/
-async function getToken(){
-  if (token) return token;
-  if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
-  await gisWait();                                  /* ★在るまで待つ（上のコメント）*/
+/* ⚠️ **`prompt:''` を必ず付ける。**「出す必要が無ければ画面を出さない」の指定で、
+      一度許可した人には**アカウント選択も同意も出さない**（黙って通る）。
+      付けないと**リロードのたびに選択画面**が出る（実機で指摘された）。
+   ⚠️ **トークンは変数にしか持たない。**`sessionStorage` に置けばリロードを
+      またげるが、**アクセストークンを web storage に置く**ことになる。
+      ここは図面が読める鍵なので置かない。リロードで聞かれるのは**意図どおり**。
+   🔴 **ポップアップは「タップから」開く。** Safari は**ユーザー操作と紐づかない**
+      ポップアップを止めて「このサイトではポップアップウインドウが開きます」と聞く。
+      `#id=` で開いた直後は**タップが無い**ので、自動で要求すると毎回それが出る。
+      ⇒ **まず黙って試し、対話が要るときだけ「読み込む」ボタンを出す**（`needTap`）。 */
+function reqToken(hint){
   return new Promise((res, rej) => {
     google.accounts.oauth2.initTokenClient({
       client_id: CFG.CLIENT_ID,
       scope: CFG.SCOPE,
+      prompt: '',                                   /* ★出す必要が無ければ出さない */
       callback: r => {
         if (!r || !r.access_token) { rej(new Error('ログインが完了しませんでした')); return; }
         token = r.access_token; res(token);
       },
-      error_callback: e => rej(new Error('ログインを中止しました' + (e && e.type ? '（' + e.type + '）' : '')))
-    }).requestAccessToken();
+      error_callback: e => {
+        var ty = (e && e.type) ? String(e.type) : '';
+        /* ⚠️ **「止められた」と「やめた」を同じ文言にしない**（直し方が違う）*/
+        var msg = /popup_failed_to_open|popup_blocked/.test(ty)
+          ? 'ポップアップが開けませんでした（Safari が止めています）'
+          : /popup_closed/.test(ty)
+            ? 'ログインの画面を閉じました'
+            : 'ログインできませんでした' + (ty ? '（' + ty + '）' : '');
+        var err = new Error(msg); err.gis = ty; rej(err);
+      }
+    }).requestAccessToken(hint || {});
   });
+}
+async function getToken(){
+  if (token) return token;
+  if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
+  await gisWait();                                  /* ★在るまで待つ（上のコメント）*/
+  return reqToken();
 }
 
 async function openDrive(id){
@@ -385,20 +408,26 @@ async function openDrive(id){
     /* ★描く所は「選ぶ」と同じ1本を通す（実装を2つ持たない）*/
     await draw(buf, kind, t0);
   } catch (e) {
-    /* ★ログインまわりの失敗は**もう一度押せば通る**ことが多い（同意を閉じた・
-       読み込みが遅れた）。行き止まりにせず、その場に「もう一度」を出す。 */
-    log('✗ ' + (e && e.message ? e.message : e), 'ng');
-    retryOut(id, (e && e.message) ? e.message : String(e));
+    /* ★ログインまわりの失敗は**押せば通る**（Safari がポップアップを止めた・
+       同意を閉じた）。行き止まりにせず、その場にボタンを出す。
+       ⚠️ **ここから先はタップの中で開く**のでポップアップは止められない。 */
+    var m = (e && e.message) ? e.message : String(e);
+    log('✗ ' + m, 'ng');
+    retryOut(id, m, /popup|ログイン/.test(m));
   } finally {
     busy = false;
     document.getElementById('pick').disabled = false;
   }
 }
-/** 「もう一度」だけを出す枠。★Drive へ逃がすのは driveOut、やり直しはこちら */
-function retryOut(id, why){
+/** 「もう一度」だけを出す枠。★Drive へ逃がすのは driveOut、やり直しはこちら。
+    ⚠️ `login` のときは文言を変える（「失敗した」ではなく「押せば開く」）。 */
+function retryOut(id, why, login){
   const ph = document.getElementById('ph');
-  ph.innerHTML = '<b>読み込めませんでした</b><span>' + why +
-    '<br><button class="pri" id="rt">もう一度</button></span>';
+  ph.innerHTML = (login ? '<b>Google の許可が必要です</b>' : '<b>読み込めませんでした</b>') +
+    '<span>' + why +
+    (login ? '<br>下のボタンを押すと Google の画面が開きます（初回だけ聞かれます）' : '') +
+    '<br><button class="pri" id="rt">' + (login ? 'Drive から読み込む' : 'もう一度') +
+    '</button></span>';
   ph.style.display = '';
   document.getElementById('rt').onclick = () => { openDrive(id); };
 }

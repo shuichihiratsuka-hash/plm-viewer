@@ -72,7 +72,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0823d</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -336,10 +336,12 @@ function gisWait(ms){
    ⚠️ **トークンは変数にしか持たない。**`sessionStorage` に置けばリロードを
       またげるが、**アクセストークンを web storage に置く**ことになる。
       ここは図面が読める鍵なので置かない。リロードで聞かれるのは**意図どおり**。
-   🔴 **ポップアップは「タップから」開く。** Safari は**ユーザー操作と紐づかない**
-      ポップアップを止めて「このサイトではポップアップウインドウが開きます」と聞く。
-      `#id=` で開いた直後は**タップが無い**ので、自動で要求すると毎回それが出る。
-      ⇒ **まず黙って試し、対話が要るときだけ「読み込む」ボタンを出す**（`needTap`）。 */
+   🔴 **ポップアップは「タップから」開く。** `requestAccessToken()` は
+      **必ずポップアップを開く**（`prompt:''` でも窓そのものは開く。
+      ★**「黙って試す」経路は存在しない**）。Safari は**ユーザー操作と
+      紐づかない**ポップアップを止めて「このサイトではポップアップウインドウが
+      開きます」と聞くので、**読み込み時に自動で要求してはいけない**。
+      ⇒ `#id=` で開いたときは `tapToLoad()` でタップを待つ。 */
 function reqToken(hint){
   return new Promise((res, rej) => {
     google.accounts.oauth2.initTokenClient({
@@ -419,6 +421,19 @@ async function openDrive(id){
     document.getElementById('pick').disabled = false;
   }
 }
+/** 🔴 読み込む前に**タップを待つ**枠。上の理由（ポップアップ）でこれが要る。
+    ⚠️ 「押してください」だけ書かない。**押すと何が起きるか**を書く
+       （Google の画面が出るのか出ないのかで、身構え方が変わる）。 */
+function tapToLoad(id){
+  const ph = document.getElementById('ph');
+  ph.innerHTML = '<b>Drive のファイルを読み込みます</b>' +
+    '<span><code style="font-family:var(--mono)">' + id + '</code>' +
+    '<br>下のボタンを押すと読み込みが始まります。' +
+    '<br>Google の許可がまだのときだけ、確認の画面が出ます。' +
+    '<br><button class="pri" id="rt">Drive から読み込む</button></span>';
+  ph.style.display = '';
+  document.getElementById('rt').onclick = () => { openDrive(id); };
+}
 /** 「もう一度」だけを出す枠。★Drive へ逃がすのは driveOut、やり直しはこちら。
     ⚠️ `login` のときは文言を変える（「失敗した」ではなく「押せば開く」）。 */
 function retryOut(id, why, login){
@@ -443,10 +458,17 @@ if (CFG.CLIENT_ID) {
     openDrive(m[m.length > 1 ? 1 : 0]);
   };
   if (hashId) {
-    /* ★本命（Drive の読み込み）が自動で走るので、「STEP を選ぶ」は主役から降ろす。
-       ⚠️ **消さない。** ビューアとして単体で使いたい人が居るので入口は残す */
+    /* 🔴 **自動で読み込まない。タップを待つ。**
+       GIS の `requestAccessToken()` は**必ずポップアップを開く**（`prompt:''` は
+       ポップアップ**の中**の同意画面を省くだけで、窓そのものは開く）。
+       Safari は**ユーザー操作と紐づかない**ポップアップを止めて
+       「このサイトではポップアップウインドウが開きます」と毎回聞く。
+       ⇒ **黙って試す経路は存在しない。** 読み込みはタップの中から始める。
+       ⚠️ **自動要求に戻さないこと。** 一見親切だが、毎回あの確認が出る。
+       ★`plm-gas` から来た人はここで1回押す。押した先は
+         （既に許可済みなら）画面が出ずに読み込みが始まる。 */
     document.getElementById('pick').classList.remove('pri');
-    openDrive(hashId);
+    tapToLoad(hashId);
   }
 } else if (hashId) {
   /* ⚠️ 指定されたのに読めないなら**そう言う**（黙って白くしない）*/

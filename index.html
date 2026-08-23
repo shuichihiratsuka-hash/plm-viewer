@@ -54,8 +54,14 @@ button.pri{background:var(--accent);border-color:var(--accent);color:#04121f;fon
 button:disabled{opacity:.45;cursor:default}
 main{flex:1;position:relative;min-height:14rem}
 #cv{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none}
+/* ⚠️ `pointer-events:none` は**枠そのものだけ**（モデルを回すドラッグを吸わせない）。
+   🔴 **中のボタン・リンクには `auto` を戻すこと。** 戻さないと枠の中の
+      ボタンが**押しても素通り**する（2026-08-23 に実機で踏んだ。
+      「Drive から読み込む」「もう一度」「Drive で開く」の3つが全部死んでいた）。
+   ★見えていて押せないものは「壊れている」と読まれる。 */
 #ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:.5rem;text-align:center;padding:1.5rem;pointer-events:none}
+#ph button,#ph a{pointer-events:auto}
 #ph.on{background:rgba(14,165,233,.10);outline:2px dashed var(--accent);outline-offset:-8px}
 #ph b{font-size:15px}
 #ph span{color:var(--ink3);font-size:12px;max-width:22rem}
@@ -72,7 +78,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0823d</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0823e</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には

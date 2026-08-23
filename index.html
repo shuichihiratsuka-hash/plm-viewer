@@ -304,12 +304,37 @@ let token = '';
 function gisReady(){
   return !!(window.google && google.accounts && google.accounts.oauth2);
 }
-/** 権限をもらう。★押したときだけ出す（勝手にログイン画面を出さない）*/
-function getToken(){
+/* 🔴 **GIS（accounts.google.com/gsi/client）は `async defer` で読んでいるので、
+      module の実行より後に来ることがある。**
+   ⚠️ **在るかどうかを1回見て諦めてはいけない。** それをやっていたので
+      「1回目は開けて、閉じて開き直すとログインのエラー」になっていた
+      （初回は three.js のダウンロードで時間が稼げて間に合い、2回目は
+       キャッシュで全部速いので追い越される。**スマホ固有ではない**）。
+   ⇒ **待つ。** 15秒待って来なければ、そのとき初めて諦める。 */
+function gisWait(ms){
+  const limit = (ms || 15000);
   return new Promise((res, rej) => {
-    if (token) { res(token); return; }
-    if (!CFG.CLIENT_ID) { rej(new Error('クライアントIDが設定されていません（config.js）')); return; }
-    if (!gisReady()) { rej(new Error('Google のログインを読み込めていません（再読み込みしてください）')); return; }
+    if (gisReady()) { res(); return; }
+    let said = false;
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (gisReady()) { clearInterval(iv); res(); return; }
+      if (!said && Date.now() - t0 > 400) {
+        said = true; log('Google のログインを読み込んでいます…');
+      }
+      if (Date.now() - t0 > limit) {
+        clearInterval(iv);
+        rej(new Error('Google のログインを読み込めませんでした（通信が塞がれている可能性があります）'));
+      }
+    }, 100);
+  });
+}
+/** 権限をもらう。★押したときだけ出す（勝手にログイン画面を出さない）*/
+async function getToken(){
+  if (token) return token;
+  if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
+  await gisWait();                                  /* ★在るまで待つ（上のコメント）*/
+  return new Promise((res, rej) => {
     google.accounts.oauth2.initTokenClient({
       client_id: CFG.CLIENT_ID,
       scope: CFG.SCOPE,
@@ -360,11 +385,22 @@ async function openDrive(id){
     /* ★描く所は「選ぶ」と同じ1本を通す（実装を2つ持たない）*/
     await draw(buf, kind, t0);
   } catch (e) {
+    /* ★ログインまわりの失敗は**もう一度押せば通る**ことが多い（同意を閉じた・
+       読み込みが遅れた）。行き止まりにせず、その場に「もう一度」を出す。 */
     log('✗ ' + (e && e.message ? e.message : e), 'ng');
+    retryOut(id, (e && e.message) ? e.message : String(e));
   } finally {
     busy = false;
     document.getElementById('pick').disabled = false;
   }
+}
+/** 「もう一度」だけを出す枠。★Drive へ逃がすのは driveOut、やり直しはこちら */
+function retryOut(id, why){
+  const ph = document.getElementById('ph');
+  ph.innerHTML = '<b>読み込めませんでした</b><span>' + why +
+    '<br><button class="pri" id="rt">もう一度</button></span>';
+  ph.style.display = '';
+  document.getElementById('rt').onclick = () => { openDrive(id); };
 }
 
 /* ボタンは**設定が在るときだけ**出す（押せるのに動かないものを作らない）*/
@@ -377,7 +413,12 @@ if (CFG.CLIENT_ID) {
     if (!m) { log('✗ ファイルIDが読み取れませんでした', 'ng'); return; }
     openDrive(m[m.length > 1 ? 1 : 0]);
   };
-  if (hashId) openDrive(hashId);
+  if (hashId) {
+    /* ★本命（Drive の読み込み）が自動で走るので、「STEP を選ぶ」は主役から降ろす。
+       ⚠️ **消さない。** ビューアとして単体で使いたい人が居るので入口は残す */
+    document.getElementById('pick').classList.remove('pri');
+    openDrive(hashId);
+  }
 } else if (hashId) {
   /* ⚠️ 指定されたのに読めないなら**そう言う**（黙って白くしない）*/
   log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');

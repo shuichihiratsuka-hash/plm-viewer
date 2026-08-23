@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>STEP ビューア（実験）</title>
+<!--
+  plm-gas の 3D を「この画面で回す」ための実験。★まだ製品ではない。
+
+  いまの段階（第1歩）
+    ・**ファイルを選ぶ**だけ。Drive も OAuth も使わない
+    ・目的は「実物の STEP が本当に描けるか」と「どのくらい待つか」を測ること
+  次の段階（第2歩・OAuth ができてから）
+    ・URL の #id=<DriveのファイルID> から Drive API で直接読む
+    ・⚠️ いまは #id= を付けても読めない。その旨を画面に出す（黙って白くしない）
+
+  ⚠️ ここは GitHub Pages ＝**公開**。図面データはこのページに含まれない。
+     読むのは「開いた人が Drive で開ける権限を持つファイル」だけ。
+-->
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+1p:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+<style>
+:root{
+  --bg:#080d18; --card:#0d1526; --raise:#131d33; --line:#1b2540;
+  --ink:#e8eef8; --ink2:#94a3b8; --ink3:#5f6b82;
+  --accent:#0ea5e9; --accent-hi:#38bdf8; --ng:#f87171; --wa:#fbbf24; --ok:#34d399;
+  --font:'M PLUS 1p',system-ui,-apple-system,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overscroll-behavior:none}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;
+  line-height:1.75;display:flex;flex-direction:column}
+header{padding:calc(.6rem + env(safe-area-inset-top)) .8rem .6rem;background:var(--card);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+h1{margin:0;font-size:15px;font-weight:700;white-space:nowrap}
+.tag{font-family:var(--mono);font-size:10px;color:var(--ink3);border:1px solid var(--line);
+  border-radius:999px;padding:.1em .6em}
+.sp{flex:1}
+button{font-family:var(--font);font-size:14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:var(--raise);color:var(--ink2);
+  min-height:44px;padding:0 1rem}
+button:active{transform:translateY(1px)}
+button.pri{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:700}
+button:disabled{opacity:.45;cursor:default}
+main{flex:1;position:relative;min-height:14rem}
+#cv{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none}
+#ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:.5rem;text-align:center;padding:1.5rem;pointer-events:none}
+#ph.on{background:rgba(14,165,233,.10);outline:2px dashed var(--accent);outline-offset:-8px}
+#ph b{font-size:15px}
+#ph span{color:var(--ink3);font-size:12px;max-width:22rem}
+footer{background:var(--card);border-top:1px solid var(--line);
+  padding:.6rem .8rem calc(.6rem + env(safe-area-inset-bottom));
+  max-height:42vh;overflow:auto}
+.hd{font-size:12px;color:var(--ink2)}
+#log{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;margin:.35rem 0 0;
+  color:var(--ink2)}
+.ok{color:var(--ok)} .ng{color:var(--ng)} .wa{color:var(--wa)}
+.lic{margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--line);
+  font-size:10.5px;color:var(--ink3);line-height:1.7}
+a{color:var(--accent-hi)}
+</style>
+</head><body>
+<header>
+  <h1>STEP ビューア</h1><span class="tag">実験</span>
+  <span class="sp"></span>
+  <input type="file" id="f" accept=".stp,.step,.igs,.iges,application/step,model/step" style="display:none">
+  <button class="pri" id="pick">STEP を選ぶ</button>
+  <button id="fit" disabled>全体</button>
+</header>
+<main>
+  <canvas id="cv"></canvas>
+  <div id="ph"><b>STEP を選んでください</b>
+    <span>iPhone なら「ファイル」から Drive を辿れます。<br>
+      ファイルはこの端末から出ません（このページはサーバに何も送りません）</span></div>
+</main>
+<footer>
+  <div class="hd">測るもの：<b>WASM の読み込み</b>／<b>変換</b>／<b>三角形の数</b>／<b>合計</b></div>
+  <div id="log">（まだ何も読み込んでいません）</div>
+  <div class="lic">
+    3D の読み込みに <a href="https://github.com/kovacsv/occt-import-js" target="_blank" rel="noopener">occt-import-js</a>
+    （<a href="licenses/LGPL-2.1.occt-import-js.txt">LGPL-2.1</a>／
+    <a href="https://www.opencascade.com" target="_blank" rel="noopener">OpenCASCADE</a> は
+    <a href="licenses/LGPL-2.1.opencascade.txt">LGPL-2.1</a>）、
+    描画に <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>（MIT）を、
+    どちらも<b>改変せず</b> jsDelivr から読み込んで使っています。
+  </div>
+</footer>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
+const logEl = document.getElementById('log');
+let lines = [];
+function log(t, cls){
+  lines.push(cls ? '<span class="' + cls + '">' + t + '</span>' : t);
+  logEl.innerHTML = lines.join('\n');
+  logEl.parentElement.scrollTop = 1e6;
+}
+const mb = n => (n / 1048576).toFixed(1) + ' MB';
+const sec = ms => (ms / 1000).toFixed(1) + ' 秒';
+
+/* ── 下地 ─────────────────────────────────────────────────── */
+const cv = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080d18);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1e6);
+camera.position.set(200, 160, 220);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x0a1020, 1.1));
+const dl = new THREE.DirectionalLight(0xffffff, 1.5);
+dl.position.set(1, 1.4, 1); scene.add(dl);
+let model = null;
+
+function resize(){
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+(function loop(){ controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+function fit(){
+  if (!model) return;
+  const box = new THREE.Box3().setFromObject(model);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+  controls.target.copy(c);
+  camera.near = r / 500; camera.far = r * 500;
+  camera.position.copy(c).add(new THREE.Vector3(1, .8, 1).setLength(r * 2.4));
+  camera.updateProjectionMatrix(); controls.update();
+}
+document.getElementById('fit').onclick = fit;
+
+/* ── occt-import-js を1回だけ読む。★ここが待ち時間の主（WASM 7.3MB）── */
+let occtP = null;
+function loadOcct(){
+  if (occtP) return occtP;
+  occtP = new Promise((res, rej) => {
+    const t0 = performance.now();
+    log('occt-import-js を読み込み中…（WASM 約7.3MB）');
+    const s = document.createElement('script');
+    s.src = OCCT + 'occt-import-js.js';
+    s.onload = () => {
+      if (typeof occtimportjs !== 'function') { rej(new Error('occtimportjs が見つかりません')); return; }
+      occtimportjs({ locateFile: n => OCCT + n })
+        .then(o => { log('✓ 読み込み完了　' + sec(performance.now() - t0), 'ok'); res(o); })
+        .catch(rej);
+    };
+    s.onerror = () => rej(new Error('CDN から読み込めませんでした（社内から jsdelivr に出られない可能性）'));
+    document.head.appendChild(s);
+  });
+  return occtP;
+}
+
+/* ── 読み込み ─────────────────────────────────────────────── */
+let busy = false;
+async function open(file){
+  if (busy) return;
+  busy = true;
+  document.getElementById('pick').disabled = true;
+  lines = []; log('ファイル：' + file.name + '　' + mb(file.size));
+  if (file.size > 30 * 1048576) {
+    log('⚠️ 30MB を超えています。スマホでは落ちる可能性があります', 'wa');
+  }
+  if (model) { scene.remove(model); model = null; }
+  document.getElementById('ph').style.display = 'none';
+  const tAll = performance.now();
+  try {
+    const occt = await loadOcct();
+    const buf = new Uint8Array(await file.arrayBuffer());
+    log('変換中…（大きいファイルはここで画面が止まります）');
+    await new Promise(r => setTimeout(r, 40));      /* 上の行を描かせてから重い処理へ */
+
+    const t1 = performance.now();
+    const iges = /\.(igs|iges)$/i.test(file.name);
+    const result = iges ? occt.ReadIgesFile(buf, null) : occt.ReadStepFile(buf, null);
+    const tConv = performance.now() - t1;
+    if (!result || !result.success) { log('✗ 変換に失敗しました（STEP として読めない）', 'ng'); return; }
+    log('✓ 変換完了　' + sec(tConv) + '　メッシュ ' + result.meshes.length + ' 個', 'ok');
+
+    /* occt の attributes は three.js に**そのまま渡せる形**（README のとおり）*/
+    const g = new THREE.Group();
+    let tri = 0, vtx = 0;
+    for (const m of result.meshes) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
+      if (m.attributes.normal)
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
+      geo.setIndex(new THREE.Uint32BufferAttribute(m.index.array, 1));
+      if (!m.attributes.normal) geo.computeVertexNormals();
+      vtx += m.attributes.position.array.length / 3;
+      tri += m.index.array.length / 3;
+      const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2])
+                          : new THREE.Color(0x9fb4cc);
+      g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        color: col, metalness: .15, roughness: .62, side: THREE.DoubleSide })));
+    }
+    scene.add(g); model = g; fit();
+    document.getElementById('fit').disabled = false;
+    log('三角形 ' + tri.toLocaleString() + '　頂点 ' + vtx.toLocaleString());
+    log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');
+    if (tri > 2000000) log('⚠️ 三角形が200万超。スマホでは重いはずです', 'wa');
+  } catch (e) {
+    log('✗ ' + (e && e.message ? e.message : e), 'ng');
+    log('　メモリ不足でタブが落ちる場合もあります（その端末には大きすぎる）', 'wa');
+  } finally {
+    busy = false;
+    document.getElementById('pick').disabled = false;
+  }
+}
+
+/* ── 入口 ─────────────────────────────────────────────────── */
+const f = document.getElementById('f'), ph = document.getElementById('ph');
+document.getElementById('pick').onclick = () => f.click();
+f.onchange = () => { if (f.files[0]) open(f.files[0]); };
+addEventListener('dragover', e => { e.preventDefault(); ph.classList.add('on'); });
+addEventListener('dragleave', () => ph.classList.remove('on'));
+addEventListener('drop', e => {
+  e.preventDefault(); ph.classList.remove('on');
+  if (e.dataTransfer.files[0]) open(e.dataTransfer.files[0]);
+});
+
+/* ★第2歩の入口。⚠️ まだ動かないので「動かない」と言う（黙って白くしない）*/
+if (/(^|[#&])id=/.test(location.hash)) {
+  log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');
+  log('　Drive から直接読むには OAuth の設定（クライアントID）が要ります。');
+  log('　いまは「STEP を選ぶ」から端末のファイルを選んでください。');
+}
+</script>
+</body></html>

@@ -105,6 +105,12 @@ a{color:var(--accent-hi)}
   </div>
 </footer>
 
+<style>
+/* ★「Drive で開く」は逃げ道なので押せると分かる形にする（文字リンクだと見落とす）*/
+#ph .drvout{display:inline-block;margin-top:10px;padding:8px 14px;border-radius:8px;
+  background:var(--accent,#0ea5e9);color:#fff;text-decoration:none;font-weight:600}
+#log a{color:var(--accent,#0ea5e9)}
+</style>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -116,6 +122,21 @@ function log(t, cls){
   lines.push(cls ? '<span class="' + cls + '">' + t + '</span>' : t);
   logEl.innerHTML = lines.join('\n');
   logEl.parentElement.scrollTop = 1e6;
+}
+/* ★行き止まりを作らない。
+   plm から「3D」を押した人は**ここが最後の窓**なので、読めない・権限が無い
+   ときに文言だけ出して終わると、Drive を自分で探し直すことになる。
+   ⚠️ **読めない形式は普通に在る**（ecr の出図は STEP だけでなく SLDPRT も貼る）。
+      だから「失敗」ではなく「Drive で開く」を出す。 */
+function driveOut(id, why){
+  if (!id) { log(why, 'ng'); return; }
+  var u = 'https://drive.google.com/file/d/' + encodeURIComponent(id) + '/view';
+  log(why + '　→ <a href="' + u + '" target="_blank" rel="noopener">Drive で開く</a>', 'ng');
+  var ph = document.getElementById('ph');
+  ph.innerHTML = '<b>このページでは開けません</b><span>' + why +
+    '<br><a class="drvout" href="' + u + '" target="_blank" rel="noopener">Drive で開く</a>' +
+    '<br>回せるのは <code style="font-family:var(--mono)">.stp .step .igs .iges</code> です</span>';
+  ph.style.display = '';
 }
 const mb = n => (n / 1048576).toFixed(1) + ' MB';
 const sec = ms => (ms / 1000).toFixed(1) + ' 秒';
@@ -315,25 +336,25 @@ async function openDrive(id){
         headers: { Authorization: 'Bearer ' + tk } });
     if (!meta.ok) {
       /* ⚠️ 403 と 404 を同じ文言にしない（直し方が違う）*/
-      log(meta.status === 403
+      driveOut(id, meta.status === 403
         ? '✗ このファイルを開く権限がありません（Drive の共有設定を確認してください）'
         : meta.status === 404
           ? '✗ ファイルが見つかりません（IDが違う／消えている）'
-          : '✗ Drive が ' + meta.status + ' を返しました', 'ng');
+          : '✗ Drive が ' + meta.status + ' を返しました');
       return;
     }
     const info = await meta.json();
     log('ファイル：' + info.name + '　' + (info.size ? mb(+info.size) : 'サイズ不明'));
     const kind = kindOf(info.name);
     if (!kind) {
-      log('✗ このファイルは読めません（.stp / .step / .igs / .iges ではない）', 'ng');
+      driveOut(id, 'この形式は回せません（' + info.name + '）');
       return;
     }
     const t0 = performance.now();
     log('ダウンロード中…');
     const dl = await fetch('https://www.googleapis.com/drive/v3/files/' +
       encodeURIComponent(id) + '?alt=media', { headers: { Authorization: 'Bearer ' + tk } });
-    if (!dl.ok) { log('✗ ダウンロードできませんでした（' + dl.status + '）', 'ng'); return; }
+    if (!dl.ok) { driveOut(id, '✗ ダウンロードできませんでした（' + dl.status + '）'); return; }
     const buf = new Uint8Array(await dl.arrayBuffer());
     log('✓ ダウンロード完了　' + sec(performance.now() - t0) + '　' + mb(buf.length), 'ok');
     /* ★描く所は「選ぶ」と同じ1本を通す（実装を2つ持たない）*/

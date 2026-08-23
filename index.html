@@ -70,14 +70,21 @@ a{color:var(--accent-hi)}
 <header>
   <h1>STEP ビューア</h1><span class="tag">実験</span>
   <span class="sp"></span>
-  <input type="file" id="f" accept=".stp,.step,.igs,.iges,application/step,model/step" style="display:none">
+  <!-- 🔴 **accept を付けないこと。**
+       iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
+       登録された UTI が無く、`application/step` も認識されない。結果として
+       許可リストが空同然になり、**ファイル選択で全部グレーアウトして選べない**
+       （2026-08-23 に実機で発生。OneDrive に落とした .stp が選べなかった）。
+       ⇒ 何でも選べるようにして、**種別の判定は JS でやる**。 -->
+  <input type="file" id="f" style="display:none">
   <button class="pri" id="pick">STEP を選ぶ</button>
   <button id="fit" disabled>全体</button>
 </header>
 <main>
   <canvas id="cv"></canvas>
   <div id="ph"><b>STEP を選んでください</b>
-    <span>iPhone なら「ファイル」から Drive を辿れます。<br>
+    <span><code style="font-family:var(--mono)">.stp .step .igs .iges</code> が読めます。<br>
+      iPhone は「ファイル」アプリから選びます（Drive・OneDrive どちらでも）。<br>
       ファイルはこの端末から出ません（このページはサーバに何も送りません）</span></div>
 </main>
 <footer>
@@ -168,11 +175,27 @@ function loadOcct(){
 
 /* ── 読み込み ─────────────────────────────────────────────── */
 let busy = false;
+/** 読める形か。★accept で絞れないので**ここで**見る（拡張子だけが手掛かり）*/
+function kindOf(name){
+  const n = String(name || '').toLowerCase();
+  if (/\.(stp|step)$/.test(n)) return 'step';
+  if (/\.(igs|iges)$/.test(n)) return 'iges';
+  return '';
+}
 async function open(file){
   if (busy) return;
   busy = true;
   document.getElementById('pick').disabled = true;
   lines = []; log('ファイル：' + file.name + '　' + mb(file.size));
+  const kind = kindOf(file.name);
+  if (!kind) {
+    /* ⚠️ 読めないものを渡されたら**そう言う**（変換に投げて意味不明な失敗にしない）*/
+    log('✗ このファイルは読めません（拡張子が .stp / .step / .igs / .iges ではない）', 'ng');
+    log('　CAD から STEP で書き出したファイルを選んでください。');
+    busy = false; document.getElementById('pick').disabled = false;
+    document.getElementById('ph').style.display = '';
+    return;
+  }
   if (file.size > 30 * 1048576) {
     log('⚠️ 30MB を超えています。スマホでは落ちる可能性があります', 'wa');
   }
@@ -186,8 +209,7 @@ async function open(file){
     await new Promise(r => setTimeout(r, 40));      /* 上の行を描かせてから重い処理へ */
 
     const t1 = performance.now();
-    const iges = /\.(igs|iges)$/i.test(file.name);
-    const result = iges ? occt.ReadIgesFile(buf, null) : occt.ReadStepFile(buf, null);
+    const result = (kind === 'iges') ? occt.ReadIgesFile(buf, null) : occt.ReadStepFile(buf, null);
     const tConv = performance.now() - t1;
     if (!result || !result.success) { log('✗ 変換に失敗しました（STEP として読めない）', 'ng'); return; }
     log('✓ 変換完了　' + sec(tConv) + '　メッシュ ' + result.meshes.length + ' 個', 'ok');

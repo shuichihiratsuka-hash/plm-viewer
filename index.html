@@ -37,6 +37,30 @@
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 *{box-sizing:border-box}
+/* ══ スクロールバーを画面に合わせる ══════════════════════════════
+   ★既定のスクロールバーは白くて太く、暗い画面から**浮いていた**（本人の指摘）。
+   ⚠️ **Chromium と Firefox で当て方が違う。**
+      ・Chromium … `::-webkit-scrollbar`（細かく作れる。丸みも付く）
+      ・Firefox  … `scrollbar-width` / `scrollbar-color`（太さと色だけ）
+   🔴 **両方書くと Chromium では `scrollbar-color` が勝って
+      `::-webkit-scrollbar` が無視される**（Chrome 121 以降）。
+      ⇒ Firefox 向けは `@supports not selector(::-webkit-scrollbar)` で囲って、
+        **Chromium には当てない**。
+   ★つまみは細く・丸く・地に馴染む色。**触ると少し明るくする**（掴めると分かる）。 */
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#26314e;border-radius:999px;
+  border:2px solid transparent;background-clip:content-box;}
+::-webkit-scrollbar-thumb:hover{background:#3a4c78;background-clip:content-box;}
+::-webkit-scrollbar-thumb:active{background:#4b6396;background-clip:content-box;}
+/* ⚠️ 縦と横が交わる角。既定だと**白い四角**が出る */
+::-webkit-scrollbar-corner{background:transparent;}
+/* ★上下の矢印は出さない（暗い画面では目障り）*/
+::-webkit-scrollbar-button{display:none;}
+/* Firefox 用（★Chromium には当てない。上の注記のとおり）*/
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-width:thin;scrollbar-color:#26314e transparent;}
+}
 html,body{margin:0;height:100%;overscroll-behavior:none}
 body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;
   line-height:1.75;display:flex;flex-direction:column}
@@ -114,6 +138,17 @@ footer .hd .sp{flex:1;}
 footer .hd button{padding:1px 8px;font-size:11px;}
 /* ログ本体だけがスクロールする。★高さは変数で持つ（1か所で決める）*/
 #log{height:var(--fh);overflow:auto;flex:none;}
+/* ★地が濃い所はつまみを少し明るくする（同じ色だと見えない）*/
+#log::-webkit-scrollbar-thumb,
+#tree .tl::-webkit-scrollbar-thumb,
+#bom .bl::-webkit-scrollbar-thumb,
+#ph .cutl::-webkit-scrollbar-thumb,
+#bom textarea::-webkit-scrollbar-thumb{background:#2f3d61;background-clip:content-box;}
+#log::-webkit-scrollbar-thumb:hover,
+#tree .tl::-webkit-scrollbar-thumb:hover,
+#bom .bl::-webkit-scrollbar-thumb:hover,
+#ph .cutl::-webkit-scrollbar-thumb:hover,
+#bom textarea::-webkit-scrollbar-thumb:hover{background:#44598c;background-clip:content-box;}
 footer.fold #log{display:none;}
 footer.fold{--fh:0px;}
 .hd{font-size:12px;color:var(--ink2)}
@@ -126,7 +161,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825d</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825e</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には

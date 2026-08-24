@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824d</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824e</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -218,6 +218,7 @@ a{color:var(--accent-hi)}
       <button data-t="sec"><i>◫</i><span>断面</span></button>
       <button data-t="meas"><i>⟷</i><span>計測</span></button>
       <button data-t="expl"><i>❉</i><span>分解</span></button>
+      <button data-t="disp"><i>◐</i><span>表示</span></button>
       <button data-t="tree"><i>☰</i><span>モデル</span></button>
     </div>
   </div>
@@ -266,6 +267,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 /* ★断面の面を掴んで動かすため。⚠️ r169 以降は `getHelper()` を scene に足す */
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+/* ★GLB で書き出すため。⚠️ 出るのは**三角形**（B-rep は入らない）*/
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
 const logEl = document.getElementById('log');
@@ -975,6 +978,18 @@ function optHtml(t){
       '<button data-r="x-">⟲X</button><button data-r="x+">⟳X</button>' +
       '<button data-r="y-">⟲Y</button><button data-r="y+">⟳Y</button>' +
       '<button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>';
+  if (t === 'disp')
+    return '<span class="lb">見え方</span>' +
+      '<button id="dwire">ワイヤー</button>' +
+      '<button id="dedge">エッジ強調</button>' +
+      '<button id="dghost">選択以外を透過</button>' +
+      '<span class="sep"></span>' +
+      '<span class="lb">選んだ部品（ツリーの☑）</span>' +
+      '<button id="dhide">隠す</button>' +
+      '<button id="donly">だけ表示</button>' +
+      '<button id="dall">全部表示</button>' +
+      '<span class="sep"></span>' +
+      '<button id="dglb">GLB で書き出す</button>';
   if (t === 'meas')
     return '<span class="lb">測る</span>' +
       '<button data-m="dist" class="mt">⟷ 距離</button>' +
@@ -1080,6 +1095,36 @@ document.getElementById('opt').addEventListener('click', ev => {
     mHint();
     return;
   }
+  if (b.id === 'dwire')  { dWire = !dWire; dispApply(); return; }
+  if (b.id === 'dedge')  { dEdge = !dEdge; dispApply(); return; }
+  if (b.id === 'dghost') {
+    dGhost = !dGhost;
+    if (dGhost && !selParts().length)
+      log('⚠️ ツリーで部品を☑にしてから押してください（選択が空だと何も透けません）', 'wa');
+    dispApply(); return;
+  }
+  if (b.id === 'dhide' || b.id === 'donly') {
+    const sel = selParts();
+    if (!sel.length) { log('ツリーで部品を☑にしてください', 'wa'); return; }
+    if (b.id === 'donly') model.traverse(o => { o.visible = false; });
+    sel.forEach(o => {
+      o.visible = (b.id !== 'dhide');
+      if (b.id === 'donly') {
+        o.traverse(x => { x.visible = true; });
+        let q = o;
+        while (q && q !== scene) { q.visible = true; q = q.parent; }
+      }
+    });
+    treeRender(); secApply(); dispApply();
+    log((b.id === 'dhide' ? '隠しました：' : 'だけ表示：') + sel.length + '件');
+    return;
+  }
+  if (b.id === 'dall') {
+    model.traverse(o => { o.visible = true; o._iso = false; });
+    treeRender(); secApply(); dispApply();
+    return;
+  }
+  if (b.id === 'dglb') { exportGlb(); return; }
   if (b.id === 'mundo') { mUndo(); return; }
   if (b.id === 'mclear') { mClear(); return; }
   if (b.id === 'explz') {
@@ -1348,6 +1393,9 @@ function toolsReset(){
   mTool = null;
   explParts = null;
   explVal = 0;
+  /* ★見え方も既定に戻す（前のモデルの設定を持ち越さない）*/
+  dWire = false; dEdge = false; dGhost = false;
+  if (edgeGroup) { scene.remove(edgeGroup); edgeGroup = null; }
 }
 
 function mHint(){
@@ -1437,6 +1485,135 @@ function secSyncMatrices(){
       if (front) { front.matrix.copy(o.matrixWorld); front.matrixWorldNeedsUpdate = true; }
     });
   });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   表示の細かい設定（ワイヤー・エッジ強調・透過・選択の隠す／だけ表示）
+   ══════════════════════════════════════════════════════════════════════
+   ★**既定は今のまま。** ここは「細かく見たい人」のための段。
+   ⚠️ エッジ強調は `EdgesGeometry` を全メッシュ分作るので**重い**。
+      三角形が多いときは**作らずに断る**（黙って固めない）。
+   ══════════════════════════════════════════════════════════════════════ */
+const EDGE_MAX_TRI = 600000;       /* これを超えたらエッジ強調はやらない */
+let dWire = false, dEdge = false, dGhost = false;
+let edgeGroup = null;
+
+/** ツリーで☑にした部品（`_sel`）を集める */
+function selParts(){
+  const a = [];
+  if (model) model.traverse(o => { if (o._sel) a.push(o); });
+  return a;
+}
+
+function dispSync(){
+  const set = (id, on) => {
+    const b = document.getElementById(id);
+    if (b) b.classList.toggle('on', !!on);
+  };
+  set('dwire', dWire); set('dedge', dEdge); set('dghost', dGhost);
+}
+
+function applyWire(){
+  if (!model) return;
+  model.traverse(o => {
+    if (o.isMesh && o.material) { o.material.wireframe = dWire; o.material.needsUpdate = true; }
+  });
+}
+
+/** エッジ強調。★面の折れ角 20度以上の稜線だけ描く（全部描くと三角形の網になる）*/
+function applyEdge(){
+  if (edgeGroup) { scene.remove(edgeGroup); edgeGroup = null; }
+  if (!dEdge || !model) return;
+  const tri = triOf(model);
+  if (tri > EDGE_MAX_TRI) {
+    dEdge = false; dispSync();
+    log('⚠️ 三角形が ' + Math.round(tri).toLocaleString() +
+        ' 個あるので、エッジ強調はやめました（' +
+        EDGE_MAX_TRI.toLocaleString() + ' 個まで）。' +
+        'ツリーで部品を絞ってからお試しください', 'wa');
+    return;
+  }
+  const g = new THREE.Group();
+  const mat = new THREE.LineBasicMaterial({ color: bgWhite ? 0x333333 : 0xf2d34a });
+  model.traverse(o => {
+    if (!o.isMesh || !o.geometry) return;
+    /* ⚠️ **見えていないものには付けない**（隠した部品の線が浮く）*/
+    let q = o, vis = true;
+    while (q && q !== scene) { if (!q.visible) { vis = false; break; } q = q.parent; }
+    if (!vis) return;
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 20), mat);
+    o.updateWorldMatrix(true, false);
+    e.matrixAutoUpdate = false;
+    e.matrix.copy(o.matrixWorld);
+    /* ★断面で切ったら線も切る（線だけ残ると読めない）*/
+    e.material.clippingPlanes = secOn ? [secPlane] : [];
+    g.add(e);
+  });
+  scene.add(g); edgeGroup = g;
+}
+
+/** 選択以外を透過。★中を覗くための機能（Kisters の画面と同じ使い方）*/
+function applyGhost(){
+  if (!model) return;
+  const sel = selParts();
+  const inSel = o => {
+    let q = o;
+    while (q && q !== model.parent) { if (q._sel) return true; q = q.parent; }
+    return false;
+  };
+  model.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const ghost = dGhost && sel.length > 0 && !inSel(o);
+    o.material.transparent = ghost;
+    o.material.opacity = ghost ? 0.18 : 1;
+    o.material.depthWrite = !ghost;      /* ⚠️ 透過は奥行きを書かない（後ろが消える）*/
+    o.material.needsUpdate = true;
+  });
+}
+
+function dispApply(){
+  applyWire(); applyGhost(); applyEdge(); dispSync();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   GLB で書き出す
+   ══════════════════════════════════════════════════════════════════════
+   ★**できる。** `GLTFExporter` に `model` を渡すだけ。
+   ⚠️ 出るのは**三角形**（occt が返すのがそれ。B-rep は入らない）。
+   🔴 **2.29GB の STEP は救えない。** 読めないものは書き出せない
+      （ブラウザがバイト列を持てないので、そもそも開けない）。
+      ⇒ これは**開けるものを次から速く開くため**の機能。
+   ⚠️ 分解している状態で書き出すと**離れたまま**保存される。言う。
+   ⚠️ 断面・エッジ・計測は**入らない**（`model` だけ渡すので）。言う。
+   ══════════════════════════════════════════════════════════════════════ */
+function exportGlb(){
+  if (!model) { log('先に STEP を読んでください', 'wa'); return; }
+  const b2 = document.getElementById('dglb');
+  if (b2) { b2.disabled = true; b2.textContent = '書き出し中…'; }
+  function fin(){ if (b2) { b2.disabled = false; b2.textContent = 'GLB で書き出す'; } }
+  if (explVal > 0)
+    log('⚠️ 分解しています（' + explVal + '%）。**離れたまま**書き出されます', 'wa');
+  log('GLB を作っています…（三角形 ' + Math.round(triOf(model)).toLocaleString() + '）');
+  try {
+    new GLTFExporter().parse(model, buf => {
+      try {
+        const blob = new Blob([buf], { type: 'model/gltf-binary' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = String(shotName || 'model').replace(/\.[^.]+$/, '') + '.glb';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        log('✓ GLB を保存しました　' + mb(blob.size) +
+            '（★三角形だけです。断面・エッジ・計測は入りません）', 'ok');
+      } finally { fin(); }
+    }, err => {
+      fin();
+      log('✗ GLB を作れませんでした（' + String(err && err.message || err) + '）', 'ng');
+    }, { binary: true });
+  } catch (e) {
+    fin();
+    log('✗ GLB を作れませんでした（' + String(e.message || e) + '）', 'ng');
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1552,6 +1729,8 @@ function treeRender(){
   box.innerHTML = rows.map((r, i) =>
     '<div class="tr' + (r.o.visible ? '' : ' dim') + '" data-i="' + i + '">' +
       '<span class="tw" data-a="t">' + (r.kids ? (r.o._tclosed ? '▸' : '▾') : '') + '</span>' +
+      /* ★複数選択のチェック。⚠️ 名前を押す操作は変えない（覚え直させない）*/
+      '<span class="te" data-a="c">' + (r.o._sel ? '☑' : '☐') + '</span>' +
       '<span class="te" data-a="v">' + (r.o.visible ? '👁' : '—') + '</span>' +
       '<span class="tn" style="padding-left:' + (r.depth * 10) + 'px" data-a="i">' +
         esc(r.name) + '</span>' +
@@ -1590,10 +1769,19 @@ document.getElementById('treel').addEventListener('click', ev => {
   if (!r) return;
   const act = (ev.target.getAttribute && ev.target.getAttribute('data-a')) || 'i';
   if (act === 't') { r.o._tclosed = !r.o._tclosed; treeRender(); return; }
+  if (act === 'c') {
+    /* ★☑ は**その節点の下も一緒に**（サブ組立をまとめて選べる）*/
+    const on = !r.o._sel;
+    r.o.traverse(x => { x._sel = on; });
+    treeRender();
+    dispApply();                /* ★透過は選択で変わる */
+    return;
+  }
   if (act === 'v') {
     r.o.visible = !r.o.visible;
     treeRender();
     secApply();                 /* ★隠した部品の蓋も消す */
+    dispApply();                /* ★エッジも見えているものだけに */
     return;
   }
   /* ★名前を押したら**その部品だけ表示**（isolate）。もう一度押すと全部戻す */

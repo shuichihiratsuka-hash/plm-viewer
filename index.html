@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824j</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824k</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -349,6 +349,14 @@ function log(t, cls){
   /* ★スクロールするのは `#log` 自身（`footer` ではなくなった）*/
   logEl.scrollTop = 1e6;
 }
+
+/* ★案内の中の「別のファイルを選ぶ」を受ける */
+document.getElementById('ph').addEventListener('click', ev => {
+  if (ev.target && ev.target.id === 'phback') {
+    phReset();
+    document.getElementById('f').click();
+  }
+});
 
 /* ★ログの中の「それでも試す」を受ける。
    ⚠️ ログは innerHTML で作り直すので、**入れ物への委譲**で受ける
@@ -1201,6 +1209,9 @@ function optHtml(t){
       '<button data-ea="x" class="eax">X 軸</button>' +
       '<button data-ea="y" class="eax">Y 軸</button>' +
       '<button data-ea="z" class="eax">Z 軸</button>' +
+      '<button data-ea="part" class="eax" ' +
+        'title="部品ごとの向きに開きます。板・フランジは面の鉛直方向、' +
+        'ボルト・軸は軸方向。★三角形の形から推定した近似です">部品の軸</button>' +
       '<button data-ea="radial" class="eax">放射</button>' +
       '<span id="explax" class="lb"></span>';
   if (t === 'sec')
@@ -1671,18 +1682,79 @@ function cubeHit(ev){
   return CUBE_FACES[hit.face.materialIndex] || null;
 }
 
-/* ★押したら見る向きを変える。⚠️ 本体の操作より**先に**見る（回されないように）*/
+/**
+ * 箱をドラッグして回す。
+ * ★本人の要望：「右上の ViewCube も 3D モデルに連動してグリグリ動かせないの？」
+ * ★向きの決め方は本体のドラッグ（OrbitControls）と**同じ**にする
+ *   （箱だけ逆に回ると気持ち悪い）。
+ *   OrbitControls は「右へ引くと `theta` が減る」「下へ引くと `phi` が減る」なので、
+ *   ここも同じ符号にする。
+ * ⚠️ 真上・真下を**越えさせない**（越えると絵がひっくり返る）。
+ */
+function cubeSpin(dx, dy){
+  const off = camera.position.clone().sub(controls.target);
+  const r = off.length();
+  if (!(r > 0)) return;
+  const U = new THREE.Vector3(0, 1, 0);
+  /* ★1画素あたりの回し量。OrbitControls は `2π / 画面の高さ` ≒ 0.0067 rad/px。
+     ★箱は 96px しか無いので**少し速め**にする（少し引くだけで回れるように）。 */
+  const K = 0.009;
+  /* 横：世界の上まわり */
+  off.applyAxisAngle(U, -dx * K);
+  /* 縦：カメラの右まわり。★上からの角（phi）で止める */
+  const right = new THREE.Vector3().crossVectors(U, off);
+  if (right.lengthSq() > 1e-12) {
+    right.normalize();
+    const cur = Math.acos(Math.max(-1, Math.min(1, off.clone().normalize().dot(U))));
+    const want = Math.max(0.06, Math.min(Math.PI - 0.06, cur - dy * K));
+    off.applyAxisAngle(right, want - cur);
+  }
+  camera.up.copy(U);
+  camera.position.copy(controls.target).add(off.setLength(r));
+  camera.lookAt(controls.target);
+  controls.update();
+}
+
+/* ★箱の上での操作。押しただけなら「その面から見る」、引いたら「回す」。
+   ⚠️ 本体の操作より**先に**受ける（capture）。でないとモデルが回ってしまう。 */
+let cubeDrag = null;
 renderer.domElement.addEventListener('pointerdown', ev => {
   const f = cubeHit(ev);
   if (!f) return;
   ev.stopPropagation();
   ev.preventDefault();
-  const v = CUBE_VIEW[f];
+  cubeDrag = { x: ev.clientX, y: ev.clientY, moved: 0, face: f, id: ev.pointerId };
+  try { renderer.domElement.setPointerCapture(ev.pointerId); } catch (e) {}
+  renderer.domElement.style.cursor = 'grabbing';
+}, true);
+
+renderer.domElement.addEventListener('pointermove', ev => {
+  if (!cubeDrag || ev.pointerId !== cubeDrag.id) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  const dx = ev.clientX - cubeDrag.x, dy = ev.clientY - cubeDrag.y;
+  cubeDrag.moved += Math.abs(dx) + Math.abs(dy);
+  cubeDrag.x = ev.clientX; cubeDrag.y = ev.clientY;
+  cubeSpin(dx, dy);
+}, true);
+
+function cubeUp(ev){
+  if (!cubeDrag || ev.pointerId !== cubeDrag.id) return;
+  ev.stopPropagation();
+  const st = cubeDrag;
+  cubeDrag = null;
+  try { renderer.domElement.releasePointerCapture(ev.pointerId); } catch (e) {}
+  navMode(navTool);                     /* ★カーソルを戻す */
+  /* ★ほとんど動かしていなければ「押した」と見る（5画素） */
+  if (st.moved >= 5) return;
+  const v = CUBE_VIEW[st.face];
   if (!v) return;
   flipView = v[1];
   viewTo(v[0]);
-  log('「' + f + '」から見ています（Y が上）');
-}, true);                              /* ★capture。OrbitControls より先に受ける */
+  log('「' + st.face + '」から見ています（Y が上）');
+}
+renderer.domElement.addEventListener('pointerup', cubeUp, true);
+renderer.domElement.addEventListener('pointercancel', cubeUp, true);
 
 cubeReady = true;          /* ★ここまでで ViewCube の用意ができた */
 
@@ -1868,6 +1940,94 @@ let explParts = null, explVal = 0;
 let explAxis = 'auto';
 let explSize = null;      /* モデルの外形の大きさ（軸ごとの長さ）*/
 
+/**
+ * 対称な 3×3 の固有値と固有ベクトル（ヤコビ法）。
+ * ★3×3 なので回すのは十数回で十分。外部の部品は要らない。
+ * @returns {{val:number[], vec:number[][]}} `vec` は**列**が固有ベクトル
+ */
+function jacobi3(m){
+  const A = [m[0].slice(), m[1].slice(), m[2].slice()];
+  const V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let s = 0; s < 24; s++) {
+    let p = 0, q = 1, mx = Math.abs(A[0][1]);
+    if (Math.abs(A[0][2]) > mx) { p = 0; q = 2; mx = Math.abs(A[0][2]); }
+    if (Math.abs(A[1][2]) > mx) { p = 1; q = 2; mx = Math.abs(A[1][2]); }
+    if (mx < 1e-14) break;
+    const th = 0.5 * Math.atan2(2 * A[p][q], A[q][q] - A[p][p]);
+    const c = Math.cos(th), sn = Math.sin(th);
+    for (let k = 0; k < 3; k++) {
+      const akp = A[k][p], akq = A[k][q];
+      A[k][p] = c * akp - sn * akq; A[k][q] = sn * akp + c * akq;
+    }
+    for (let k = 0; k < 3; k++) {
+      const apk = A[p][k], aqk = A[q][k];
+      A[p][k] = c * apk - sn * aqk; A[q][k] = sn * apk + c * aqk;
+    }
+    for (let k = 0; k < 3; k++) {
+      const vkp = V[k][p], vkq = V[k][q];
+      V[k][p] = c * vkp - sn * vkq; V[k][q] = sn * vkp + c * vkq;
+    }
+  }
+  return { val: [A[0][0], A[1][1], A[2][2]], vec: V };
+}
+
+/**
+ * その部品の「向き」を三角形の形から推定する。
+ *
+ * 🔴 **正確な軸や面は持っていない。**（三角形に割った形しか無い。だから近似）
+ *    ⚠️ 本人の問い：「2部品の接触面の鉛直方向に動くとかできない？
+ *       （いろいろ接触してるから無理か？軸とか認識しないか）」
+ *    ⇒ **接触の相手を探すのは当てにならない**（何にでも触っている）。
+ *      代わりに**部品そのものの形から向きを出す**。これなら相手に依らない。
+ *
+ * ★やり方：頂点のばらつき（共分散）の固有ベクトルを取る。
+ *    ・板・フランジ → 3つの分散が (大, 大, 小)。**小さいほうが面の鉛直**
+ *    ・ボルト・軸   → (大, 小, 小)。**大きいほうが軸方向**
+ *    ⇒ どちらも「**他の2つと最も違う分散**」の向きが欲しいもの。1つの規則で済む。
+ * ⚠️ 立方体のように3つが揃っていると決まらない → `null` を返して組立の軸に落とす。
+ * ⚠️ 頂点は**間引いて**使う（部品あたり最大 700 点。数千部品でも保つ）。
+ */
+function partAxis(o){
+  const pts = [];
+  const v = new THREE.Vector3();
+  o.traverse(x => {
+    if (!x.isMesh || !x.geometry) return;
+    const a = x.geometry.attributes.position;
+    if (!a || !a.count) return;
+    x.updateWorldMatrix(true, false);
+    const step = Math.max(1, Math.floor(a.count / 700));
+    for (let i = 0; i < a.count; i += step) {
+      v.fromBufferAttribute(a, i).applyMatrix4(x.matrixWorld);
+      pts.push(v.x, v.y, v.z);
+    }
+  });
+  const n = pts.length / 3;
+  if (n < 8) return null;
+  let mx = 0, my = 0, mz = 0;
+  for (let i = 0; i < n; i++) { mx += pts[i * 3]; my += pts[i * 3 + 1]; mz += pts[i * 3 + 2]; }
+  mx /= n; my /= n; mz /= n;
+  let xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i * 3] - mx, b = pts[i * 3 + 1] - my, c = pts[i * 3 + 2] - mz;
+    xx += a * a; yy += b * b; zz += c * c; xy += a * b; xz += a * c; yz += b * c;
+  }
+  const e = jacobi3([[xx / n, xy / n, xz / n], [xy / n, yy / n, yz / n],
+                     [xz / n, yz / n, zz / n]]);
+  const L = e.val.map(Math.abs);
+  const top = Math.max(L[0], L[1], L[2]);
+  if (!(top > 0)) return null;
+  /* ★「他の2つと最も違う」を選ぶ */
+  let best = -1, bestS = 0;
+  for (let i = 0; i < 3; i++) {
+    const other = (L[0] + L[1] + L[2] - L[i]) / 2;
+    const sc = Math.abs(L[i] - other) / top;
+    if (sc > bestS) { bestS = sc; best = i; }
+  }
+  /* ⚠️ 3つが揃っている（立方体・球）→ 向きが決まらない。呼ぶ側で落とす */
+  if (best < 0 || bestS < 0.18) return null;
+  return new THREE.Vector3(e.vec[0][best], e.vec[1][best], e.vec[2][best]).normalize();
+}
+
 /** 段の「開く向き」のボタンに今の状態を当てる */
 function explSync(){
   document.querySelectorAll('#opt .eax').forEach(b =>
@@ -1893,6 +2053,7 @@ function explBuild(){
     /* ★中心からのずれを覚える。向きは**動かすたびに**ここから作る
        （軸を変えても組み直さなくて済む）*/
     const c = bb.getCenter(new THREE.Vector3()).sub(b2.c);
+    /* ★`axis` は `undefined` のまま置く（「部品の軸」を選んだときに初めて出す）*/
     explParts.push({ o: o, base: o.position.clone(), c: c });
   });
 }
@@ -1908,6 +2069,24 @@ function explDir(q){
     const v = q.c.clone();
     if (v.lengthSq() < 1e-9) v.set(0, 1, 0);
     return v.normalize();
+  }
+  if (explAxis === 'part') {
+    /* ★部品ごとの向き。**一度出したら覚える**（毎フレーム計算しない）*/
+    if (q.axis === undefined) q.axis = partAxis(q.o);
+    if (q.axis) {
+      const u = q.axis, s = explSize || { x: 1, y: 1, z: 1 };
+      /* ★その向きに沿った外形の半分（比例させる基準）*/
+      const half = Math.max((Math.abs(s.x * u.x) + Math.abs(s.y * u.y) +
+                             Math.abs(s.z * u.z)) / 2, 1e-6);
+      let t = q.c.dot(u) / half;
+      /* ⚠️ **ちょうど真ん中にある部品**（穴に入ったボルトなど）は比例だと動かない。
+         ★その向きにどちらが「外」か決めようがないので、**必ず引き抜く量**を持たせる
+           （0.05 だと見た目が変わらず「効いていない」に見えた）。 */
+      const FLOOR = 0.35;
+      if (Math.abs(t) < FLOOR) t = (t < 0 ? -FLOOR : FLOOR);
+      return u.clone().multiplyScalar(t);
+    }
+    /* ⚠️ 向きが決まらない部品（立方体など）は**組立の軸**に落とす */
   }
   const k = (explAxis === 'auto') ? explMainAxis() : explAxis;
   const half = Math.max((explSize ? explSize[k] : 1) / 2, 1e-6);
@@ -1926,9 +2105,18 @@ function explApply(){
   explParts.forEach(q => { q.o.position.copy(q.base).addScaledVector(explDir(q), d); });
   /* ★いま何の軸で開いているかを出す（`auto` は選ばれた軸も見せる）*/
   const ax = document.getElementById('explax');
-  if (ax) ax.textContent = explAxis === 'radial' ? '放射'
-    : explAxis === 'auto' ? ('自動（' + explMainAxis().toUpperCase() + ' 軸）')
-    : (explAxis.toUpperCase() + ' 軸');
+  if (ax) {
+    if (explAxis === 'radial') ax.textContent = '放射';
+    else if (explAxis === 'part') {
+      /* ★向きが決まらなかった部品の数を出す（近似だと分かるように）*/
+      let no = 0;
+      explParts.forEach(q => { if (q.axis === null) no++; });
+      ax.textContent = '部品の軸（およそ' +
+        (no ? '／' + no + '件は組立の軸に）' : '）');
+    }
+    else if (explAxis === 'auto') ax.textContent = '自動（' + explMainAxis().toUpperCase() + ' 軸）';
+    else ax.textContent = explAxis.toUpperCase() + ' 軸';
+  }
   if (model) model.updateMatrixWorld(true);
   secSyncMatrices();
   mLabels();
@@ -2414,6 +2602,33 @@ const SZ_STOP = 800 * 1048576;    /* これを超えたら止める */
 /**
  * @return {boolean} 進めてよいか
  */
+/**
+ * 案内の場所（`#ph`）に言葉を出す。
+ * 🔴 **断るときはここに出す。**
+ *    ⚠️ ログだけに出していたので、**ログを畳んでいると何も見えなかった**
+ *       （`footer.fold #log{display:none}`）。本人の報告：
+ *       「2.29GBのファイルを選んだんだけど、何もできないよ」
+ *       ——実は理由を出していたのに、**畳まれた欄の中だった**。
+ *    ⇒ 断るときは①ここに大きく出す ②ログも開く。**黙って何も起きないを無くす。**
+ */
+function phSay(html){
+  const el = document.getElementById('ph');
+  if (!el) return;
+  el.innerHTML = html;
+  el.style.display = '';
+  ftFold(false);            /* ★ログも開く（詳しい理由はそこにある）*/
+}
+/** 案内を元の文に戻す */
+function phReset(){
+  const el = document.getElementById('ph');
+  if (!el) return;
+  el.innerHTML = PH_HTML;
+  el.style.display = '';
+}
+/* ★元の案内文を覚えておく（断ったあと戻すため）。
+   ★この module は body の末尾で走るので、この時点で #ph は在る。 */
+const PH_HTML = (document.getElementById('ph') || {}).innerHTML || '';
+
 function sizeGate(bytes, name){
   const b = Number(bytes) || 0;
   if (!b) return true;                 /* 分からないときは通す（Drive が返さないことがある）*/
@@ -2456,6 +2671,20 @@ function sizeGate(bytes, name){
       log('　<button data-force="1">それでも試す</button>' +
           '　★落ちたらタブごと閉じることになります。' +
           '他の作業を保存してから押してください。', 'wa');
+    /* 🔴 **画面の真ん中にも出す。** ログを畳んでいても必ず目に入るように */
+    phSay('<b>' + mb(b) + ' は' + (hard ? 'この画面では開けません' : '大きすぎます') +
+      '</b><span>' +
+      (hard
+        ? 'ブラウザが<b>1本の連続したかたまり</b>として読める上限は' +
+          '<b>2046MB</b>（実測）です。これは変換部品に渡す<b>前</b>の壁なので、' +
+          'このページ側では越えられません。'
+        : '読めても変換部品へ丸ごと写すので倍のメモリが要ります。') +
+      '<br><br>★<b>外に出さずに済む手</b>（下のログに詳しく出しています）<br>' +
+      '① 元の CAD から glTF / GLB で直接書き出す<br>' +
+      '② CAD Assistant（無償・Windows のアプリ）で STEP → GLB<br>' +
+      '③ サブ組立ごとに書き出す<br>' +
+      '<br>どれも<b>自分の PC の中だけ</b>で終わります。' +
+      '</span><button id="phback">別のファイルを選ぶ</button>');
     return false;
   }
   if (b > SZ_WARN) {
@@ -2562,6 +2791,12 @@ async function open(file){
     /* ⚠️ 読めないものを渡されたら**そう言う**（変換に投げて意味不明な失敗にしない）*/
     log('✗ このファイルは読めません（.stp .step .igs .iges .glb .gltf のどれでもない）', 'ng');
     log('　CAD から STEP か glTF / GLB で書き出したファイルを選んでください。');
+    /* ★画面の真ん中にも出す（ログを畳んでいても見える）*/
+    phSay('<b>この形は読めません</b><span>' +
+      '読めるのは <code style="font-family:var(--mono)">' +
+      '.stp .step .igs .iges .glb .gltf</code> です。<br>' +
+      '選んだのは <b>' + esc(file.name) + '</b> でした。' +
+      '</span><button id="phback">別のファイルを選ぶ</button>');
     busy = false; document.getElementById('pick').disabled = false;
     document.getElementById('ph').style.display = '';
     return;

@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824v</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824x</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -393,8 +393,14 @@ document.getElementById('ph').addEventListener('click', ev => {
    ⚠️ ログは innerHTML で作り直すので、**入れ物への委譲**で受ける
       （行ごとに結線すると作り直すたびに外れる）。 */
 logEl.addEventListener('click', ev => {
-  const b = ev.target.closest ? ev.target.closest('[data-force]') : null;
-  if (!b || !szLast) return;
+  const t = ev.target.closest ? ev.target.closest('[data-force],[data-cut]') : null;
+  if (!t || !szLast) return;
+  if (t.hasAttribute('data-cut')) {
+    /* ★選んだサブ組立を切り出して開く */
+    document.querySelectorAll('#log [data-cut]').forEach(x => { x.disabled = true; });
+    exRun(szLast, Number(t.getAttribute('data-cut')), t.getAttribute('data-nm'));
+    return;
+  }
   szForce = true;
   open(szLast);
 });
@@ -3759,6 +3765,69 @@ function sizeGate(bytes, name){
       ★まずこれで、切り出す価値があるかを見る。
    ══════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════
+   切り出しのための索引
+   ══════════════════════════════════════════════════════════════════
+   ★STEP は実体が `#番号` で参照し合う形なので、サブ組立だけを切り出すには
+     **到達閉包**（そこから辿れる実体ぜんぶ）が要る。そのための索引。
+   ⚠️ **「切り出す」と言われたときだけ**作る（調べるだけなら要らない）。
+   ⚠️ 大きさの目安：実体1500万・参照2500万で **およそ 350MB**。
+      参照の多くは 0 個（CARTESIAN_POINT が大半）なのでこれより小さいことが多い。
+   ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 後ろ向きに拾う種類と、その扱い。
+ *
+ * 1 … **組立の繋がり（NAUO）**。★**親が S なら入れる**（＝下へ降りる）。
+ *      ⚠️ 「親と子の両方が S なら」にすると、子はまだ S に居ないので
+ *         **永遠に入らず、中身が空になる**。向きがある規則。
+ * 2 … ふつうの後ろ向き。1つでも S を指していれば入れて、前向きに広げる。
+ * 3 … **並びを持つ**もの。1つでも S を指していれば入れるが、
+ *      ⚠️ **前向きに広げない**（`(#a,#b,#c,…)` を辿るとファイル全体を引きずる）。
+ *      ★書き出すときに**並びを S の分だけに書き換える**。
+ * 4 … **最後の参照が S のときだけ**入れる。
+ *      🔴 色の指定（`STYLED_ITEM('',(#色),#形)`）がこれ。
+ *         ⚠️ 「1つでも S を指していれば」にすると、**色は共通**なので
+ *            ファイル中の全部の色指定が入り、前向きの閉包が**全部の形**を
+ *            引きずり込む（実測で捕まえた。B の形7個が全部漏れた）。
+ *         ★見るべきは「どの**形**に付いた色か」＝**最後の参照**。
+ * 5 … **最初の参照が S のときだけ**入れる（＝下へ降りる関係）。
+ *
+ * ⚠️ 分類（category）と層（layer）は**入れない**。
+ *    `PRODUCT_RELATED_PRODUCT_CATEGORY` は**全品目**を並びで参照するので、
+ *    入れると全品目を引きずり込む。見るのに要らないので捨てる。
+ * ⚠️ `PRESENTATION_STYLE_ASSIGNMENT` と `PRODUCT_DEFINITION_CONTEXT` は
+ *    **入れない**。前向きの閉包が正しいものだけ拾ってくれる
+ *    （後ろ向きに入れると、共通のものを介して余計なものが繋がる）。
+ */
+const EX_ANCHOR = {
+  'NEXT_ASSEMBLY_USAGE_OCCURRENCE': 1,
+  'PRODUCT_DEFINITION_SHAPE': 2,
+  'SHAPE_DEFINITION_REPRESENTATION': 2,
+  'CONTEXT_DEPENDENT_SHAPE_REPRESENTATION': 2,
+  'APPLICATION_PROTOCOL_DEFINITION': 2,
+  'SHAPE_REPRESENTATION_RELATIONSHIP': 5,
+  'STYLED_ITEM': 4,
+  'OVER_RIDING_STYLED_ITEM': 4,
+  /* ★色の束と図の束。並びを書き換えて残す（捨てると全部灰色になる）*/
+  'MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION': 3,
+  'DRAUGHTING_MODEL': 3
+};
+/** 種類の番号（`kw[id]` に入れる）。0 は「どうでもいい種類」*/
+const EX_KW_LIST = Object.keys(EX_ANCHOR);
+const EX_KW_NO = {};
+EX_KW_LIST.forEach((k, i) => { EX_KW_NO[k] = i + 1; });
+
+/** 足りなくなったら倍にする（`maxId` は最後まで分からない）*/
+function exGrow(a, need, Ctor){
+  if (a && a.length > need) return a;
+  let n2 = (a ? a.length : 0) || 1 << 20;
+  while (n2 <= need) n2 *= 2;
+  const b = new Ctor(n2);
+  if (a) b.set(a);
+  return b;
+}
+
 /** 調べたい種類。★これだけ中身まで見る（残りは数えるだけ）*/
 const SCAN_KEEP = {
   'PRODUCT': 1,
@@ -3823,7 +3892,8 @@ function scanStrs(t){
  * ⚠️ 種類名は**長さと先頭3バイト**で数え、最後に一度だけ文字へ直す
  *    （数千万回の文字列化を避ける）。
  */
-async function scanStep(file){
+async function scanStep(file, opt){
+  const WANT_IX = !!(opt && opt.index);  /* ★索引も作るか（切り出すときだけ）*/
   const CH = 16 * 1024 * 1024;          /* 一度に読む量 */
   const MAX_STMT = 8 * 1024 * 1024;     /* 1つの文の上限（超えたら区切りを強制）*/
   let pos = 0;
@@ -3832,6 +3902,16 @@ async function scanStep(file){
   let total = 0, maxId = 0, forced = 0;
   const kinds = new Map();               /* 「長さ|先頭3」→ {n, name} */
   const keep = [];                       /* 中身まで見る文（少ない）*/
+  /* ★索引（切り出すときだけ）*/
+  let ixOff = null, ixLen = null, ixKw = null, ixRefPos = null, ixRefCnt = null;
+  let ixRefList = null, ixRefN = 0;
+  if (WANT_IX) {
+    ixOff = new Uint32Array(1 << 21); ixLen = new Uint32Array(1 << 21);
+    ixKw = new Uint8Array(1 << 21);
+    ixRefPos = new Uint32Array(1 << 21); ixRefCnt = new Uint32Array(1 << 21);
+    ixRefList = new Uint32Array(1 << 22);
+    log('　★切り出しの索引も作ります（メモリを数百MB使います）');
+  }
   const t0 = performance.now();
   let lastLog = 0;
 
@@ -3865,10 +3945,28 @@ async function scanStep(file){
     let st = 0;                          /* 0=ふつう 1=文字列 2=注釈 */
     let cmt = 0;                         /* 注釈が始まった位置 */
     let start = 0, i = 0;
+    let refBase = ixRefN;                /* ★いまの文の参照の書き始め */
     const L = b.length;
     while (i < L) {
       const c = b[i];
       if (st === 0) {
+        /* ★参照（`#番号`）を拾う。⚠️ **文字列や注釈の中は拾わない**ので、
+           この「ふつう」の所でだけ見る。文の先頭の `#`（自分の番号）は
+           下の切り出しで別に扱うので、ここでは**位置で見分ける**。 */
+        if (WANT_IX && c === 0x23) {
+          let k2 = i + 1, v = 0, dg = 0;
+          while (k2 < L && b[k2] >= 0x30 && b[k2] <= 0x39) { v = v * 10 + (b[k2] - 0x30); k2++; dg++; }
+          if (dg > 0) {
+            /* ⚠️ 文の先頭の `#` は自分の番号。空白を飛ばした先頭かどうかで見る */
+            let w2 = start;
+            while (w2 < i && b[w2] <= 0x20) w2++;
+            if (w2 !== i) {                        /* 先頭でない ＝ 参照 */
+              ixRefList = exGrow(ixRefList, ixRefN, Uint32Array);
+              ixRefList[ixRefN++] = v;
+            }
+            i = k2; continue;
+          }
+        }
         if (c === 0x27) { st = 1; i++; continue; }                 /* ' */
         if (c === 0x2f && b[i + 1] === 0x2a) {                      /* slash star */
           st = 2; cmt = i; i += 2; continue;
@@ -3876,6 +3974,7 @@ async function scanStep(file){
         if (c === 0x3b) {                                          /* ; */
           /* ── 1文ぶん ── */
           let j = start;
+          /* ★この文の参照は `refBase` から `ixRefN` まで（順に詰めてある）*/
           while (j < i && b[j] <= 0x20) j++;
           if (b[j] === 0x23) {                                     /* # */
             let k = j + 1, id = 0;
@@ -3902,9 +4001,25 @@ async function scanStep(file){
               /* ★中身まで見る種類だけ、文をそのまま覚える */
               if (SCAN_KEEP[rec.name] && keep.length < 400000)
                 keep.push({ id: id, kw: rec.name, t: stepText(b.subarray(e, i)) });
+              /* ★索引：この実体がどこにあるか／どの参照を持つか */
+              if (WANT_IX) {
+                ixOff = exGrow(ixOff, id, Uint32Array);
+                ixLen = exGrow(ixLen, id, Uint32Array);
+                ixKw = exGrow(ixKw, id, Uint8Array);
+                ixRefPos = exGrow(ixRefPos, id, Uint32Array);
+                ixRefCnt = exGrow(ixRefCnt, id, Uint32Array);
+                /* ⚠️ `j` は文の先頭（空白を飛ばした所）。`i` は `;` の位置。
+                   **`;` も含めて**写す（そのまま貼れる形にする）*/
+                ixOff[id] = carryAt + j;
+                ixLen[id] = (i + 1) - j;
+                ixKw[id] = EX_KW_NO[rec.name] || 0;
+                ixRefPos[id] = refBase;
+                ixRefCnt[id] = ixRefN - refBase;
+              }
             }
           }
           start = i + 1;
+          refBase = ixRefN;              /* ★次の文の参照はここから */
           i++;
           continue;
         }
@@ -3931,6 +4046,10 @@ async function scanStep(file){
       }
       i++;
     }
+    /* ⚠️ **チャンクを越えるときは、途中まで拾った参照を捨てる。**
+       持ち越した分は次のチャンクで**読み直す**ので、そのままだと二重に入る。
+       ★捨てるのは「まだ `;` が来ていない文」の分だけ（`refBase` 以降）。 */
+    if (WANT_IX) ixRefN = refBase;
     /* ★途中で切れた分を次へ持ち越す。
        ⚠️ 1文が読み取り単位より長いこともある（巨大な B-spline）。
           そのときは持ち越しが伸びるが、それでよい（1文ぶんだけ）。 */
@@ -3987,7 +4106,9 @@ async function scanStep(file){
       if (r.length) pdToPdf.set(q.id, r[0]);
     } else if (kw === 'NEXT_ASSEMBLY_USAGE_OCCURRENCE') {
       const r = scanRefs(q.t);
-      if (r.length >= 2) edges.push({ parent: r[0], child: r[1] });
+      /* ★NAUO 自身の番号も覚える（切り出しの閉包で「親が S か」を見るため。
+         ⚠️ 参照の並び順に頼らない）*/
+      if (r.length >= 2) edges.push({ id: q.id, parent: r[0], child: r[1] });
     } else if (kw === 'PRODUCT_DEFINITION_SHAPE') {
       const r = scanRefs(q.t);
       if (r.length) pdsToPd.set(q.id, r[0]);
@@ -4055,12 +4176,266 @@ async function scanStep(file){
     roots: roots, kidsOf: kidsOf, nameOf: nameOf,
     subtree: pd => sub2(pd, new Set()),
     products: prodName.size, kinds: kindList,
-    edges: edges.length
+    edges: edges.length,
+    /* ★切り出しに使う索引（`opt.index` を頼んだときだけ入る）*/
+    ix: WANT_IX ? { off: ixOff, len: ixLen, kw: ixKw,
+                    refPos: ixRefPos, refCnt: ixRefCnt,
+                    refList: ixRefList, refN: ixRefN,
+                    kwName: EX_KW_LIST } : null,
+    /* ★切り出しで使う繋がり（PD どうし）*/
+    pdEdges: edges, pdItems: pdItems, pdsToPd: pdsToPd
   };
 }
 
 /** ★調べるのをやめる旗（2GB は分の単位でかかるので、途中で降りられるように）*/
 let scanStop = false;
+/** ★同じファイルの索引は持ち回す（2回目以降の切り出しが速い）*/
+let exCache = null;      /* { file, r } */
+
+/* ══════════════════════════════════════════════════════════════════
+   選んだサブ組立だけを切り出す
+   ══════════════════════════════════════════════════════════════════
+   ★筋道
+     1. **前向きの閉包**：選んだ品目から辿れる実体を集める
+     2. **後ろ向きの拾い上げ**：形や色は「こちらを指してくる」側に居るので、
+        S の中を指している実体を足す（`EX_ANCHOR` の種類だけ）
+        ⚠️ 組立の繋がり（NAUO）は**親と子の両方が S のときだけ**
+     3. 1と2を**動かなくなるまで**繰り返す
+     4. 集めた実体を**ファイルの順に**書き出す（HEADER はそのまま写す）
+   ⚠️ 出来上がりが OCCT に読めるかは**読ませてみるまで分からない**。
+      だから切り出したら**その場で開く**。駄目でも保存はできるようにする。
+   ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 到達閉包を取る。
+ * @returns {Uint8Array} `keep[id] = 1` の旗
+ */
+function exClosure(r, rootPd){
+  const ix = r.ix, max = r.maxId;
+  const keep = new Uint8Array(max + 1);
+  /* ── 1. 前向き（幅優先）── */
+  const stack = [rootPd];
+  keep[rootPd] = 1;
+  function forward(){
+    while (stack.length) {
+      const id = stack.pop();
+      if (id > max) continue;
+      const b = ix.refPos[id], c = ix.refCnt[id];
+      for (let k = 0; k < c; k++) {
+        const q = ix.refList[b + k];
+        if (q > 0 && q <= max && !keep[q]) { keep[q] = 1; stack.push(q); }
+      }
+    }
+  }
+  forward();
+  /* ── 2〜3. 後ろ向きを混ぜて、動かなくなるまで ── */
+  const MODE = {};
+  ix.kwName.forEach((nm, i) => { MODE[i + 1] = EX_ANCHOR[nm]; });
+  /* ★並びを書き換える種類（前向きに広げない）の旗 */
+  const listOnly = new Uint8Array(max + 1);
+  for (let round = 0; round < 40; round++) {
+    let added = 0;
+    /* ★組立の繋がりは**表**から見る（親が S なら入れる＝下へ降りる）。
+       ⚠️ 参照の並び順に頼らない。 */
+    r.pdEdges.forEach(e => {
+      if (!e.id || e.id > max || keep[e.id]) return;
+      if (!keep[e.parent]) return;                 /* ★上へは登らない */
+      keep[e.id] = 1; added++; stack.push(e.id);
+    });
+    /* ★そのほかの後ろ向き */
+    for (let id = 1; id <= max; id++) {
+      const k = ix.kw[id];
+      if (!k || keep[id]) continue;
+      const mode = MODE[k];
+      if (!mode || mode === 1) continue;            /* NAUO は上で見た */
+      const b = ix.refPos[id], c = ix.refCnt[id];
+      if (!c) continue;
+      let any = false;
+      if (mode === 4) {
+        /* 🔴 **最後の参照だけ**を見る（色指定の「どの形に付いたか」）。
+           ⚠️ ここを「1つでも」にすると、共通の色を介して**全部の形**が入る。 */
+        const q = ix.refList[b + c - 1];
+        any = (q > 0 && q <= max && !!keep[q]);
+      } else if (mode === 5) {
+        /* ★最初の参照だけを見る（下へ降りる関係）*/
+        const q = ix.refList[b];
+        any = (q > 0 && q <= max && !!keep[q]);
+      } else {
+        for (let j = 0; j < c; j++) {
+          const q = ix.refList[b + j];
+          if (q > 0 && q <= max && keep[q]) { any = true; break; }
+        }
+      }
+      if (!any) continue;
+      keep[id] = 1; added++;
+      if (mode === 3) {
+        /* ⚠️ **並びは辿らない**（辿るとファイル全体を引きずる）。
+           ★最後の参照（表現の文脈）だけは要るので入れる。 */
+        listOnly[id] = 1;
+        const last = ix.refList[b + c - 1];
+        if (last > 0 && last <= max && !keep[last]) { keep[last] = 1; stack.push(last); }
+      } else stack.push(id);
+    }
+    if (!added) break;
+    forward();                       /* ★足したものから前向きに広げる */
+  }
+  return { keep: keep, listOnly: listOnly };
+}
+
+/**
+ * 切り出した STEP を作る（Blob）。
+ * ⚠️ 出来上がりは 100MB〜1GB になり得るので、**塊を貯めて Blob にする**
+ *    （1本の ArrayBuffer にしない。Blob はディスクに逃がせる）。
+ */
+async function exWrite(file, r, kp, name){
+  const keep = kp.keep, listOnly = kp.listOnly;
+  const CH = 16 * 1024 * 1024;
+  const OUT = 8 * 1024 * 1024;
+  const parts = [];
+  let buf = new Uint8Array(OUT), used = 0, wrote = 0, kept = 0;
+  function put(a){
+    if (used + a.length > buf.length) { parts.push(buf.subarray(0, used).slice()); buf = new Uint8Array(Math.max(OUT, a.length)); used = 0; }
+    buf.set(a, used); used += a.length; wrote += a.length;
+  }
+  const enc = new TextEncoder();      /* ★書き換えた文を戻すのに使う */
+  /* ── HEADER はそのまま写す（単位や規格の宣言が入っている）── */
+  const head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
+  const ht = DEC_L1.decode(head);
+  const dpos = ht.indexOf('DATA;');
+  put(enc.encode(dpos > 0 ? ht.slice(0, dpos + 5) + '\n'
+    : 'ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n'));
+  /* ── 選んだ実体を**ファイルの順に**写す ── */
+  let pos = 0, carry = new Uint8Array(0), carryAt = 0;
+  const t0 = performance.now();
+  let lastLog = 0;
+  while (pos < file.size) {
+    if (scanStop) throw new Error('中止しました');
+    const end = Math.min(pos + CH, file.size);
+    const raw = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+    let b;
+    if (carry.length) { b = new Uint8Array(carry.length + raw.length); b.set(carry); b.set(raw, carry.length); }
+    else { b = raw; carryAt = pos; }
+    let st = 0, start = 0, i = 0;
+    const L = b.length;
+    while (i < L) {
+      const c = b[i];
+      if (st === 0) {
+        if (c === 0x27) { st = 1; i++; continue; }
+        if (c === 0x2f && b[i + 1] === 0x2a) { st = 2; i += 2; continue; }
+        if (c === 0x3b) {
+          let j = start;
+          while (j < i && b[j] <= 0x20) j++;
+          if (b[j] === 0x23) {
+            let k2 = j + 1, id = 0;
+            while (k2 < i && b[k2] >= 0x30 && b[k2] <= 0x39) { id = id * 10 + (b[k2] - 0x30); k2++; }
+            if (id > 0 && id <= r.maxId && keep[id]) {
+              if (listOnly[id]) {
+                /* ★並びを **S に残った分だけ**に書き換える。
+                   ⚠️ そのまま写すと、捨てた実体を指す**行き先の無い参照**が
+                      残って STEP として壊れる。 */
+                const t = stepText(b.subarray(j, i + 1));
+                const out2 = t.replace(/\(([^()]*)\)/, (whole, inner) => {
+                  if (inner.indexOf('#') < 0) return whole;
+                  const ok = inner.split(',').map(x => x.trim())
+                    .filter(x => { const m2 = x.match(/^#(\d+)$/);
+                      return m2 ? !!keep[Number(m2[1])] : true; });
+                  return '(' + ok.join(',') + ')';
+                });
+                /* ⚠️ 並びが空になったら**その実体は捨てる**（空の並びは規格違反）*/
+                if (/\(\s*\)/.test(out2)) { start = i + 1; i++; continue; }
+                put(enc.encode(out2)); put(NL); kept++;
+              } else { put(b.subarray(j, i + 1)); put(NL); kept++; }
+            }
+          }
+          start = i + 1; i++; continue;
+        }
+        i++; continue;
+      }
+      if (st === 1) { if (c === 0x27) st = 0; i++; continue; }
+      if (c === 0x2a && b[i + 1] === 0x2f) { st = 0; i += 2; continue; }
+      i++;
+    }
+    let tail = b.subarray(start);
+    if (tail.length > 8 * 1024 * 1024) tail = tail.subarray(tail.length - 4096);
+    carry = tail.slice();
+    carryAt = carryAt + (b.length - carry.length);
+    pos = end;
+    if (performance.now() - lastLog > 700) {
+      lastLog = performance.now();
+      const pct = pos / file.size, el = (performance.now() - t0) / 1000;
+      log('　切り出しています… ' + Math.round(pct * 100) + '%（' +
+          kept.toLocaleString() + ' 個・' + mb(wrote) +
+          (pct > 0.01 ? '　のこり およそ ' + Math.round(el / pct - el) + ' 秒' : '') + '）');
+      await new Promise(x => setTimeout(x, 0));
+    }
+  }
+  put(enc.encode('ENDSEC;\nEND-ISO-10303-21;\n'));
+  if (used) parts.push(buf.subarray(0, used).slice());
+  log('✓ 切り出しました　実体 ' + kept.toLocaleString() + ' 個　' + mb(wrote), 'ok');
+  return { blob: new Blob(parts, { type: 'application/step' }), kept: kept, bytes: wrote };
+}
+const NL = new Uint8Array([10]);
+
+/**
+ * 選んだサブ組立を切り出して、その場で開く。
+ * @param {File} file 元の STEP
+ * @param {number} pd 選んだ品目（PRODUCT_DEFINITION の番号）
+ * @param {string} name 名前（ファイル名に使う）
+ */
+async function exRun(file, pd, name){
+  scanStop = false;
+  try {
+    /* ── 索引（同じファイルなら作り直さない）── */
+    let r = (exCache && exCache.file === file) ? exCache.r : null;
+    if (!r) {
+      log('── 切り出しの準備：索引を作ります（もう一度流し読みします）', 'ok');
+      phSay('<b>切り出しの準備…</b><span>' + esc(name) +
+            '<br>索引を作っています。下のログに進み具合が出ます。</span>' +
+            '<button id="phstop">中止する</button>');
+      r = await scanStep(file, { index: true });
+      exCache = { file: file, r: r };
+      log('　索引ができました（実体 ' + r.total.toLocaleString() +
+          '・番号の最大 ' + r.maxId.toLocaleString() +
+          '・参照 ' + r.ix.refN.toLocaleString() + '）');
+    } else log('　索引は作ってあるので使い回します');
+    /* ── 閉包 ── */
+    phSay('<b>切り出しています…</b><span>' + esc(name) +
+          '<br>下のログに進み具合が出ます。</span>' +
+          '<button id="phstop">中止する</button>');
+    const t1 = performance.now();
+    const kp = exClosure(r, pd);
+    let cnt = 0;
+    for (let i = 1; i <= r.maxId; i++) if (kp.keep[i]) cnt++;
+    log('　辿れた実体：' + cnt.toLocaleString() + ' 個（全体の ' +
+        Math.round(cnt / Math.max(r.total, 1) * 100) + '%）　' +
+        ((performance.now() - t1) / 1000).toFixed(1) + ' 秒');
+    if (!cnt) { log('✗ 何も辿れませんでした', 'ng'); return; }
+    /* ── 書き出し ── */
+    const out = await exWrite(file, r, kp, name);
+    /* ── 保存の口を先に出す（開くのに失敗しても手が残るように）── */
+    const fn = (name || 'part').replace(/[^0-9A-Za-z\u3000-\u9fff\-_]+/g, '_')
+                 .slice(0, 60) + '.stp';
+    const url = URL.createObjectURL(out.blob);
+    log('　<a href="' + url + '" download="' + esc(fn) + '">' + esc(fn) +
+        ' を保存する</a>（' + mb(out.bytes) + '）', 'ok');
+    /* ── その場で開く ── */
+    if (out.bytes > AB_MAX) {
+      log('⚠️ ' + mb(out.bytes) + ' はこの画面で開ける上限（' + mb(AB_MAX) +
+          '）を超えています。保存して、さらに下の階層で切り出してください', 'wa');
+      phSay('<b>切り出しました（開くには大きすぎます）</b><span>' +
+            mb(out.bytes) + '<br>下のログの保存リンクから受け取って、' +
+            'さらに下の階層で切り出してください。</span>' +
+            '<button id="phback">別のファイルを選ぶ</button>');
+      return;
+    }
+    log('　★そのまま開いてみます…');
+    await open(new File([out.blob], fn, { type: 'application/step' }));
+  } catch (e) {
+    log('✗ 切り出せませんでした（' + String(e && e.message || e) + '）', 'ng');
+    phSay('<b>切り出せませんでした</b><span>' + esc(String(e && e.message || e)) +
+          '</span><button id="phback">別のファイルを選ぶ</button>');
+  }
+}
 
 /** 調べた結果を画面に出す */
 async function scanShow(file){
@@ -4104,10 +4479,14 @@ async function scanShow(file){
       const share = rr.items ? Math.round(q.s.items / rr.items * 100) : 0;
       const est = r.bytes * (rr.items ? q.s.items / rr.items : 0);
       tops.push({ name: r.nameOf(q.pd), items: q.s.items, est: est });
+      /* ★押すと**そのサブ組立だけ切り出して開く**（本人の要望）。
+         ⚠️ 押せることが分かるようにボタンで出す。 */
+      const cut = '<button data-cut="' + q.pd + '" data-nm="' +
+        esc(r.nameOf(q.pd)) + '">切り出して開く</button>';
       log('　├ ' + esc(r.nameOf(q.pd)) + (q.k > 1 ? '　×' + q.k : '') +
           '　部品 ' + q.s.leaf.toLocaleString() +
           '　形 ' + q.s.items.toLocaleString() +
-          '　<b>' + share + '%</b>（目安 ' + mb(est) + '）');
+          '　<b>' + share + '%</b>（目安 ' + mb(est) + '）　' + cut);
     });
     if (rows.length > 40) log('　└ ほか ' + (rows.length - 40) + ' 件');
   });
@@ -4124,14 +4503,20 @@ async function scanShow(file){
     log('　⚠️ <b>まだ大きいサブ組立</b>：' + big.length + ' 件（' +
         big.slice(0, 5).map(t => t.name + '（' + mb(t.est) + '）').join('／') +
         '）。これらは**さらに下の階層**で出してください', 'wa');
-  log('　⚠️ 「目安」は**形の数の割合**からの推定です。実際の書き出しは CAD 側で行います。');
+  log('　⚠️ 「目安」は**形の数の割合**からの推定です。');
+  log('　★<b>「切り出して開く」</b>を押すと、そのサブ組立だけの STEP を作って開きます。');
+  log('　⚠️ **1回目は索引を作るためもう一度流し読みします**（このファイルなら数分）。' +
+      '2回目以降は索引を使い回すので速くなります。');
+  log('　⚠️ 切り出しは**色と組立の入れ子は残し、分類と層は捨てます**（見るのに要らないため）。');
 
   phSay('<b>調べ終わりました</b><span>' +
     '実体 ' + r.total.toLocaleString() + ' 個／品目 ' + r.products.toLocaleString() + ' 件<br>' +
     (fit.length
       ? '★<b>そのまま開けそうなサブ組立が ' + fit.length + ' 件</b>あります。<br>' +
-        'CAD からその単位で STEP か GLB を書き出してください。'
-      : '⚠️ どのサブ組立も大きいままです。<br>さらに下の階層で書き出してください。') +
+        '下のログの「<b>切り出して開く</b>」を押すと、' +
+        'そのサブ組立だけを切り出して開きます。'
+      : '⚠️ どのサブ組立も大きいままです。<br>' +
+        'それでも「切り出して開く」で小さくできます（下のログ）。') +
     '<br><br>詳しい内訳は下のログに出しています。' +
     '</span><button id="phback">別のファイルを選ぶ</button>');
 }
@@ -4606,6 +4991,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
     renderer,
     scanStep, scanShow, partAxis, cubeSpin, faceFit, mPickFace, mItems: () => mItems,
+    exClosure, exWrite, exRun,
     /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。
          ⚠️ 隠れたタブでは rAF が止まるので、確認はここから直に叩く） */
     snapShow, rubShow, mPxUpdate,

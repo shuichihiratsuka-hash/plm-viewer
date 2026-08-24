@@ -165,7 +165,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825j</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825k</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -460,10 +460,12 @@ function log(t, cls){
 document.getElementById('ph').addEventListener('click', ev => {
   /* ★一覧の「切り出して開く」*/
   const cb = ev.target.closest ? ev.target.closest('[data-cut]') : null;
-  if (cb && szLast) {
+  if (cb) {
+    /* 🔴 **必ず「調べたファイル」を使う。** `szLast` は開くたびに変わるので使えない */
+    if (!scanFile) { log('先に「中身を調べる」を実行してください', 'wa'); return; }
     const t = scanTops[Number(cb.getAttribute('data-i'))];
     document.querySelectorAll('#ph [data-cut]').forEach(x => { x.disabled = true; });
-    exRun(szLast, Number(cb.getAttribute('data-cut')), t ? t.name : '切り出し');
+    exRun(scanFile, Number(cb.getAttribute('data-cut')), t ? t.name : '切り出し');
     return;
   }
   /* ★名前を押して**中へ降りる** */
@@ -514,13 +516,15 @@ logEl.addEventListener('click', ev => {
       （行ごとに結線すると作り直すたびに外れる）。 */
 logEl.addEventListener('click', ev => {
   const t = ev.target.closest ? ev.target.closest('[data-force],[data-cut]') : null;
-  if (!t || !szLast) return;
+  if (!t) return;
   if (t.hasAttribute('data-cut')) {
-    /* ★選んだサブ組立を切り出して開く */
+    /* ★選んだサブ組立を切り出して開く。★**調べたファイル**を使う（上の注記のとおり）*/
+    if (!scanFile) { log('先に「中身を調べる」を実行してください', 'wa'); return; }
     document.querySelectorAll('#log [data-cut]').forEach(x => { x.disabled = true; });
-    exRun(szLast, Number(t.getAttribute('data-cut')), t.getAttribute('data-nm'));
+    exRun(scanFile, Number(t.getAttribute('data-cut')), t.getAttribute('data-nm'));
     return;
   }
+  if (!szLast) return;
   szForce = true;
   open(szLast);
 });
@@ -4547,8 +4551,22 @@ async function scanStep(file, opt){
 let scanStop = false;
 /** ★調べた結果のサブ組立の一覧（画面の真ん中に出すため）*/
 let scanTops = [];
-/** ★調べた結果そのもの（降りるのに要る）*/
-let scanRes = null;
+/**
+ * ★調べた結果そのもの（降りるのに要る）
+ * 🔴 **調べたファイルは `szLast` とは別に覚える。**
+ *    ⚠️ `szLast` は「最後に**開こうとした**ファイル」で、`open()` が毎回上書きする。
+ *       切り出したものを開くとそこに変わるので、次の切り出しが
+ *       **切り出したファイルの中から元の番号を探す**ことになり **0 個**になった
+ *       （2026-08-25 に実機で出た。役目の違う2つを混ぜたのが間違い）。
+ */
+let scanRes = null, scanFile = null;
+/**
+ * ★一度切り出したものは覚えておく（`pd` → {blob, name}）。
+ * ⇒ 同じサブ組立に戻るときは**読み直さずに切り替わる**（本人の要望）。
+ * ⚠️ 6 件まで（Blob はディスクに逃げるが、無限には持たない）。
+ */
+const exBlobs = new Map();
+const EX_BLOB_MAX = 6;
 /** ★いま見ている階層（根からの道。パン屑に出す）*/
 let cutPath = [];
 
@@ -4860,6 +4878,14 @@ const NL = new Uint8Array([10]);
 async function exRun(file, pd, name){
   scanStop = false;
   try {
+    /* ★一度切り出したものは覚えてある → **読み直さずに切り替える**（本人の要望）*/
+    const had = exBlobs.get(pd);
+    if (had) {
+      log('★この サブ組立は切り出してあるので、そのまま開きます（' +
+          mb(had.blob.size) + '）', 'ok');
+      await open(new File([had.blob], had.fn, { type: 'application/step' }));
+      return;
+    }
     /* ── 索引（同じファイルなら作り直さない）── */
     let r = (exCache && exCache.file === file) ? exCache.r : null;
     if (!r) {
@@ -4936,6 +4962,11 @@ async function exRun(file, pd, name){
     const url = URL.createObjectURL(out.blob);
     log('　<a href="' + url + '" download="' + esc(fn) + '">' + esc(fn) +
         ' を保存する</a>（' + mb(out.bytes) + '）', 'ok');
+    /* ★覚えておく（同じものに戻るときは読み直さない）*/
+    exBlobs.set(pd, { blob: out.blob, fn: fn });
+    while (exBlobs.size > EX_BLOB_MAX) exBlobs.delete(exBlobs.keys().next().value);
+    log('　★この サブ組立は覚えました。一覧から選び直すと**すぐ**開きます' +
+        '（覚えるのは ' + EX_BLOB_MAX + ' 件まで）');
     /* ── その場で開く ── */
     if (out.bytes > AB_MAX) {
       log('⚠️ ' + mb(out.bytes) + ' はこの画面で開ける上限（' + mb(AB_MAX) +
@@ -4960,6 +4991,8 @@ async function exRun(file, pd, name){
 /** 調べた結果を画面に出す */
 async function scanShow(file){
   scanStop = false;
+  scanFile = file;                     /* ★切り出しはこれを使う（`szLast` は使わない）*/
+  exBlobs.clear();                     /* ⚠️ 別のファイルを調べたら覚えた分は捨てる */
   log('── ' + file.name + ' を**読み込まずに**調べます（' + mb(file.size) + '）', 'ok');
   log('　★1本のかたまりにせず少しずつ読むので、2046MB の壁に当たりません。');
   phSay('<b>調べています…</b><span>' + esc(file.name) + '　' + mb(file.size) +

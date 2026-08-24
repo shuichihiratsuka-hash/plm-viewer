@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824u</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824v</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -380,6 +380,12 @@ document.getElementById('ph').addEventListener('click', ev => {
   if (id === 'phscan' && szLast) {
     ev.target.disabled = true;
     scanShow(szLast);
+    return;
+  }
+  if (id === 'phstop') {                 /* ★途中でやめる */
+    scanStop = true;
+    ev.target.disabled = true;
+    ev.target.textContent = '中止しています…';
   }
 });
 
@@ -3819,16 +3825,27 @@ function scanStrs(t){
  */
 async function scanStep(file){
   const CH = 16 * 1024 * 1024;          /* 一度に読む量 */
-  let pos = 0, st = 0;                   /* st: 0=ふつう 1=文字列 2=注釈 */
+  const MAX_STMT = 8 * 1024 * 1024;     /* 1つの文の上限（超えたら区切りを強制）*/
+  let pos = 0;
   let carry = new Uint8Array(0);         /* 文の途中で切れた分 */
-  let cmt = 0;                           /* 注釈が始まった位置 */
-  let total = 0, maxId = 0;
+  let carryAt = 0;                       /* ★`carry[0]` のファイル上の位置 */
+  let total = 0, maxId = 0, forced = 0;
   const kinds = new Map();               /* 「長さ|先頭3」→ {n, name} */
   const keep = [];                       /* 中身まで見る文（少ない）*/
   const t0 = performance.now();
   let lastLog = 0;
 
+  /* ── ④ STEP かどうかを先に見る ── */
+  {
+    const head = new Uint8Array(await file.slice(0, 256).arrayBuffer());
+    const txt = DEC_L1.decode(head);
+    if (txt.indexOf('ISO-10303-21') < 0)
+      log('⚠️ 先頭に <code>ISO-10303-21</code> がありません。' +
+          'STEP ではないかもしれませんが、そのまま調べます', 'wa');
+  }
+
   while (pos < file.size) {
+    if (scanStop) throw new Error('中止しました');
     const end = Math.min(pos + CH, file.size);
     const buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
     /* ★前回の残りと繋ぐ */
@@ -3836,7 +3853,17 @@ async function scanStep(file){
     if (carry.length) {
       b = new Uint8Array(carry.length + buf.length);
       b.set(carry); b.set(buf, carry.length);
-    } else b = buf;
+    } else { b = buf; carryAt = pos; }
+    /* ★`b` の先頭のファイル上の位置は `carryAt`（carry があるときはその位置）*/
+    /* 🔴 **状態は毎回「ふつう」から。**
+       `carry` は「最後の `;` の直後」＝**文の先頭**から始まる、という不変条件。
+       文の先頭は文字列の中でも注釈の中でもないので、必ず `st = 0`。
+       ⚠️ 以前はチャンクの**末尾**の状態を持ち越していた。末尾が文字列の中だと
+          読み直しが文字列の中から始まり、`'` の勘定がずれて以後の `;` を
+          全部見失った（2.29GB の実物で 3% の所で力尽きた）。
+       ⚠️ **1チャンクに収まるテストでは絶対に出ない不具合。** */
+    let st = 0;                          /* 0=ふつう 1=文字列 2=注釈 */
+    let cmt = 0;                         /* 注釈が始まった位置 */
     let start = 0, i = 0;
     const L = b.length;
     while (i < L) {
@@ -3907,21 +3934,36 @@ async function scanStep(file){
     /* ★途中で切れた分を次へ持ち越す。
        ⚠️ 1文が読み取り単位より長いこともある（巨大な B-spline）。
           そのときは持ち越しが伸びるが、それでよい（1文ぶんだけ）。 */
-    carry = b.subarray(start);
-    if (carry.length > 64 * 1024 * 1024) {
-      /* ⚠️ 1文が 64MB 超は異常（`;` の無い壊れたファイル）。止める */
-      throw new Error('区切りの `;` が見つからないまま 64MB を超えました' +
-                      '（STEP ではないかもしれません）');
+    let tail = b.subarray(start);
+    /* 🔴 **落ちない。** 1つの文が長すぎたら、**どこで何が起きたかを言って**
+         区切りを強制する。⚠️ 黙って死ぬのが一番困る。 */
+    if (tail.length > MAX_STMT) {
+      forced++;
+      const at = carryAt + start;
+      if (forced <= 3) {
+        const ex = DEC_L1.decode(tail.subarray(0, 90)).replace(/[\r\n]/g, ' ');
+        log('⚠️ ' + mb(at) + ' の所で、区切りの <code>;</code> が ' +
+            mb(tail.length) + ' 続きました。ここで区切ります。<br>' +
+            '　抜粋：<code>' + esc(ex) + '…</code>', 'wa');
+      }
+      tail = tail.subarray(tail.length - 4096);   /* ★末尾だけ残して先へ進む */
     }
-    carry = carry.slice();               /* ★写しを取る（元の buf を抱え続けない）*/
+    carry = tail.slice();                /* ★写しを取る（元の buf を抱え続けない）*/
+    carryAt = carryAt + (b.length - carry.length);
     pos = end;
     if (performance.now() - lastLog > 700) {
       lastLog = performance.now();
-      log('　調べています… ' + Math.round(pos / file.size * 100) + '%' +
-          '（実体 ' + total.toLocaleString() + ' 個）');
+      const pct = pos / file.size;
+      const el = (performance.now() - t0) / 1000;
+      const left = pct > 0.01 ? Math.round(el / pct - el) : null;
+      log('　調べています… ' + Math.round(pct * 100) + '%' +
+          '（実体 ' + total.toLocaleString() + ' 個' +
+          (left !== null ? '　のこり およそ ' + left + ' 秒' : '') + '）');
       await new Promise(r => setTimeout(r, 0));   /* ★画面を止めない */
     }
   }
+  if (forced) log('⚠️ 区切りを強制した所が ' + forced + ' 箇所あります。' +
+                  'その付近の実体は数えられていません', 'wa');
 
   /* ── 組立の木を組む ── */
   const prodName = new Map();     /* PRODUCT の id → 名前 */
@@ -4017,12 +4059,18 @@ async function scanStep(file){
   };
 }
 
+/** ★調べるのをやめる旗（2GB は分の単位でかかるので、途中で降りられるように）*/
+let scanStop = false;
+
 /** 調べた結果を画面に出す */
 async function scanShow(file){
+  scanStop = false;
   log('── ' + file.name + ' を**読み込まずに**調べます（' + mb(file.size) + '）', 'ok');
   log('　★1本のかたまりにせず少しずつ読むので、2046MB の壁に当たりません。');
   phSay('<b>調べています…</b><span>' + esc(file.name) + '　' + mb(file.size) +
-        '<br>下のログに進み具合が出ます。</span>');
+        '<br>下のログに進み具合と残り時間が出ます。' +
+        '<br>★2GB 級だと数分かかります。</span>' +
+        '<button id="phstop">中止する</button>');
   let r;
   try { r = await scanStep(file); }
   catch (e) {

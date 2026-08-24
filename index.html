@@ -126,7 +126,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824z</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825b</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -142,6 +142,9 @@ a{color:var(--accent-hi)}
   <!-- ★手順書に貼るとき用。**既定は暗い色**、押すと純白 -->
   <label id="bgw" style="display:none" title="手順書などに貼るときは白が使いやすいです">
     <input type="checkbox" id="bgwc"> 白背景</label>
+  <!-- ★切り出しの一覧へ戻る。★調べ直さずに次を試せるように（本人の要望）-->
+  <button id="cutback" style="display:none"
+    title="調べた結果の一覧に戻ります（調べ直しません）">切り出し一覧</button>
   <button id="shot" style="display:none">スクリーンショット</button>
   <!-- ⚠️ `fit` と `treebtn` は下のバーに移したが、**id は残す**
        （既にある結線をそのまま生かす。隠しておいて下のバーから押させる）-->
@@ -424,6 +427,7 @@ document.getElementById('ph').addEventListener('click', ev => {
     return;
   }
   const id = ev.target && ev.target.id;
+  if (id === 'phlist') { if (scanRes) cutRender(); return; }
   if (id === 'phback') {
     phReset();
     document.getElementById('f').click();
@@ -802,6 +806,11 @@ function bgSet(white){
 
 document.getElementById('bgwc').addEventListener('change', function(){
   bgSet(this.checked);
+});
+/* ★「切り出し一覧」＝調べ直さずに一覧へ戻る（索引も持ち回している）*/
+document.getElementById('cutback').addEventListener('click', () => {
+  if (scanRes) cutRender();
+  else log('先に「中身を調べる」を実行してください', 'wa');
 });
 /* ⚠️ **ここで呼ばない。** `bgSet` は `secFrame` を触るが、あれはこの下（断面の節）で
    `let` で宣言されているので、ここで呼ぶと **TDZ で落ちる**（`typeof` でも避けられない）。
@@ -3960,8 +3969,10 @@ async function scanStep(file, opt){
   let carry = new Uint8Array(0);         /* 文の途中で切れた分 */
   let carryAt = 0;                       /* ★`carry[0]` のファイル上の位置 */
   let total = 0, maxId = 0, forced = 0;
+  const KEEP_MAX = 4000000;              /* ★構造を読む文の上限（達したら言う）*/
+  let keepOver = 0;
   const kinds = new Map();               /* 「長さ|先頭3」→ {n, name} */
-  const keep = [];                       /* 中身まで見る文（少ない）*/
+  const keep = [];                       /* 中身まで見る文 */
   /* ★索引（切り出すときだけ）*/
   let ixOff = null, ixLen = null, ixKw = null, ixRefPos = null, ixRefCnt = null;
   let ixRefList = null, ixRefN = 0;
@@ -4040,6 +4051,18 @@ async function scanStep(file, opt){
             let k = j + 1, id = 0;
             while (k < i && b[k] >= 0x30 && b[k] <= 0x39) { id = id * 10 + (b[k] - 0x30); k++; }
             while (k < i && (b[k] <= 0x20 || b[k] === 0x3d)) k++;  /* 空白と = */
+            /* 🔴 **複合実体（`#10=(A(...) B(...) C(...));`）を取りこぼさない。**
+               実物の STEP は単位や文脈をこの形で書く：
+                 `#10=(GEOMETRIC_REPRESENTATION_CONTEXT(3)
+                       GLOBAL_UNIT_ASSIGNED_CONTEXT((#12,#13,#14)) …);`
+               ⚠️ `=` の次が `(` なので、英字の並びを取ると**長さ 0**になり、
+                  以前は**文ごと捨てていた**。索引にも入らず、切り出した STEP に
+                  **単位も文脈も無くなり、OCCT が「読めない」と言っていた**
+                  （2026-08-24、445MB の切り出しで実際に起きた）。
+               ⇒ `(` なら**中の最初の型名**を種類として使う。 */
+            let cplx = false;
+            if (b[k] === 0x28) { cplx = true; k++;            /* ( */
+              while (k < i && b[k] <= 0x20) k++; }
             let e = k;
             while (e < i && ((b[e] >= 0x41 && b[e] <= 0x5a) ||
                              (b[e] >= 0x61 && b[e] <= 0x7a) ||
@@ -4054,13 +4077,23 @@ async function scanStep(file, opt){
               let rec = kinds.get(key);
               if (!rec) {
                 /* ★種類名は必ず ASCII なので latin1 で十分（速い）*/
-                rec = { n: 0, name: DEC_L1.decode(b.subarray(k, e)).toUpperCase() };
+                rec = { n: 0, name: (cplx ? '(複合) ' : '') +
+                        DEC_L1.decode(b.subarray(k, e)).toUpperCase() };
                 kinds.set(key, rec);
               }
               rec.n++;
               /* ★中身まで見る種類だけ、文をそのまま覚える */
-              if (SCAN_KEEP[rec.name] && keep.length < 400000)
-                keep.push({ id: id, kw: rec.name, t: stepText(b.subarray(e, i)) });
+              /* 🔴 **上限に達したら黙らない。**
+                 ⚠️ 中身まで見る種類は**部品の数に比例して増える**。
+                    以前は 40万で打ち切って**黙って捨てていた**ので、
+                    組立の木が途中で切れ、切り出しが「0個」になった
+                    （2026-08-24、実物の 2.29GB で起きた）。
+                 ★上限は 400万（1件あたり数十バイト）。達したら画面に出す。 */
+              if (!cplx && SCAN_KEEP[rec.name]) {
+                if (keep.length < KEEP_MAX)
+                  keep.push({ id: id, kw: rec.name, t: stepText(b.subarray(e, i)) });
+                else keepOver++;
+              }
               /* ★索引：この実体がどこにあるか／どの参照を持つか */
               if (WANT_IX) {
                 ixOff = exGrow(ixOff, id, Uint32Array);
@@ -4072,7 +4105,8 @@ async function scanStep(file, opt){
                    **`;` も含めて**写す（そのまま貼れる形にする）*/
                 ixOff[id] = carryAt + j;
                 ixLen[id] = (i + 1) - j;
-                ixKw[id] = EX_KW_NO[rec.name] || 0;
+                /* ⚠️ 複合実体は後ろ向きの対象にしない（前向きの閉包で拾われる）*/
+                ixKw[id] = cplx ? 0 : (EX_KW_NO[rec.name] || 0);
                 ixRefPos[id] = refBase;
                 ixRefCnt[id] = ixRefN - refBase;
               }
@@ -4143,6 +4177,11 @@ async function scanStep(file, opt){
   }
   if (forced) log('⚠️ 区切りを強制した所が ' + forced + ' 箇所あります。' +
                   'その付近の実体は数えられていません', 'wa');
+  /* 🔴 **黙って捨てない。** 木が不完全なら、そう言う */
+  if (keepOver)
+    log('🔴 <b>構造を読む上限（' + KEEP_MAX.toLocaleString() + ' 件）に達しました。' +
+        'あと ' + keepOver.toLocaleString() + ' 件を読めていません。</b>' +
+        '組立の木が**不完全**です（切り出しても中身が足りない可能性があります）', 'ng');
 
   /* ── 組立の木を組む ── */
   const prodName = new Map();     /* PRODUCT の id → 名前 */
@@ -4281,6 +4320,9 @@ function cutEst(pd){
 function cutRender(){
   const r = scanRes;
   if (!r) return;
+  /* ★上のボタンを出す（失敗しても一覧へ戻れる）*/
+  const cbk = document.getElementById('cutback');
+  if (cbk) cbk.style.display = '';
   const here = cutPath.length ? cutPath[cutPath.length - 1] : null;
   /* ★子を数える（同じ品目が何個ぶら下がるか）*/
   const ks = here === null ? r.roots : (r.kidsOf.get(here) || []);
@@ -4439,12 +4481,27 @@ async function exWrite(file, r, kp, name){
     buf.set(a, used); used += a.length; wrote += a.length;
   }
   const enc = new TextEncoder();      /* ★書き換えた文を戻すのに使う */
-  /* ── HEADER はそのまま写す（単位や規格の宣言が入っている）── */
-  const head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
-  const ht = DEC_L1.decode(head);
-  const dpos = ht.indexOf('DATA;');
-  put(enc.encode(dpos > 0 ? ht.slice(0, dpos + 5) + '\n'
-    : 'ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n'));
+  /* ── HEADER は**バイトのまま**写す ──
+     🔴 前は latin1 で文字にして UTF-8 で書き戻していたので、
+        **日本語などが入っているとバイトが変わって壊れた**。
+     ⚠️ `DATA;` が 8KB より後ろにあると **FILE_SCHEMA の無い偽ヘッダ**を出していた。
+        それだけで OCCT は「STEP として読めない」と言う。
+     ⇒ 探す窓を 1MB に広げ、**見つからなければやめる**（偽ヘッダを作らない）。 */
+  const head = new Uint8Array(await file.slice(0, 1024 * 1024).arrayBuffer());
+  let dpos = -1;
+  for (let k2 = 0; k2 + 5 <= head.length; k2++) {
+    if (head[k2] === 0x44 && head[k2 + 1] === 0x41 && head[k2 + 2] === 0x54 &&
+        head[k2 + 3] === 0x41 && head[k2 + 4] === 0x3b) { dpos = k2 + 5; break; }
+  }
+  if (dpos < 0) throw new Error('元のファイルに `DATA;` が見つかりません' +
+                                '（先頭 1MB を見ました）');
+  put(head.subarray(0, dpos));         /* ★バイトのまま */
+  put(NL);
+  /* ★出したヘッダの要を確かめる（無いと OCCT は読めない）*/
+  const hs = DEC_L1.decode(head.subarray(0, dpos));
+  if (hs.indexOf('FILE_SCHEMA') < 0)
+    log('⚠️ 元のヘッダに <code>FILE_SCHEMA</code> がありません。' +
+        'OCCT が読めない可能性があります', 'wa');
   /* ── 選んだ実体を**ファイルの順に**写す ── */
   let pos = 0, carry = new Uint8Array(0), carryAt = 0;
   const t0 = performance.now();
@@ -4473,8 +4530,12 @@ async function exWrite(file, r, kp, name){
               if (listOnly[id]) {
                 /* ★並びを **S に残った分だけ**に書き換える。
                    ⚠️ そのまま写すと、捨てた実体を指す**行き先の無い参照**が
-                      残って STEP として壊れる。 */
-                const t = stepText(b.subarray(j, i + 1));
+                      残って STEP として壊れる。
+                   🔴 **`stepText` は使わない。** あれは `\X2\` を本物の文字に戻すので、
+                      書き戻すと**規格違反の生バイト**になる。
+                      ⇒ latin1 で1バイト1文字に写し、latin1 で書き戻す
+                        （**バイトが完全に往復する**）。 */
+                const t = DEC_L1.decode(b.subarray(j, i + 1));
                 const out2 = t.replace(/\(([^()]*)\)/, (whole, inner) => {
                   if (inner.indexOf('#') < 0) return whole;
                   const ok = inner.split(',').map(x => x.trim())
@@ -4484,7 +4545,10 @@ async function exWrite(file, r, kp, name){
                 });
                 /* ⚠️ 並びが空になったら**その実体は捨てる**（空の並びは規格違反）*/
                 if (/\(\s*\)/.test(out2)) { start = i + 1; i++; continue; }
-                put(enc.encode(out2)); put(NL); kept++;
+                /* ★latin1 で書き戻す（1文字＝1バイト。往復しても変わらない）*/
+                const ob = new Uint8Array(out2.length);
+                for (let z = 0; z < out2.length; z++) ob[z] = out2.charCodeAt(z) & 0xff;
+                put(ob); put(NL); kept++;
               } else { put(b.subarray(j, i + 1)); put(NL); kept++; }
             }
           }
@@ -4551,6 +4615,49 @@ async function exRun(file, pd, name){
         Math.round(cnt / Math.max(r.total, 1) * 100) + '%）　' +
         ((performance.now() - t1) / 1000).toFixed(1) + ' 秒');
     if (!cnt) { log('✗ 何も辿れませんでした', 'ng'); return; }
+    /* 🔴 **出す前に自分で検算する。**
+       ⚠️ 壊れたものを渡して「STEP として読めない」と言われるのを繰り返さない
+          （本人：「失敗したら、毎度ファイルを調べるからやるの面倒なんだけど」）。
+       ★行き先の無い参照＝捨てた実体を指している参照。1つでも在れば壊れている。 */
+    let dang = 0, dangEx = [];
+    for (let id = 1; id <= r.maxId; id++) {
+      if (!kp.keep[id] || kp.listOnly[id]) continue;   /* 並びは書き換えるので別 */
+      const b2 = r.ix.refPos[id], c2 = r.ix.refCnt[id];
+      for (let k2 = 0; k2 < c2; k2++) {
+        const q2 = r.ix.refList[b2 + k2];
+        if (q2 > 0 && q2 <= r.maxId && !kp.keep[q2]) {
+          dang++;
+          if (dangEx.length < 5) dangEx.push('#' + id + ' → #' + q2);
+        }
+      }
+    }
+    if (dang) {
+      log('✗ <b>行き先の無い参照が ' + dang.toLocaleString() + ' 件</b>あります。' +
+          'このまま出しても STEP として読めません', 'ng');
+      log('　例：' + dangEx.join('／') + '　★閉包の規則が足りていません');
+      phSay('<b>切り出せません（参照が足りない）</b><span>' +
+            '行き先の無い参照が ' + dang.toLocaleString() + ' 件あります。<br>' +
+            '例：' + esc(dangEx.join(' / ')) + '<br><br>' +
+            'この内容を伝えてもらえれば規則を直せます。</span>' +
+            '<button id="phlist">切り出しの一覧に戻る</button>' +
+            '<button id="phback">別のファイルを選ぶ</button>');
+      return;
+    }
+    log('　✓ 検算：行き先の無い参照は 0 件（STEP として繋がっています）', 'ok');
+    /* 🔴 **期待と結果を突き合わせる。**
+       ⚠️ 調べたときに「形 N 個」と分かっているのに、切り出せた実体が
+          それに釣り合わないなら**その場で言う**。黙って空のファイルを渡さない
+          （本人：「失敗したら、毎度ファイルを調べるから面倒」）。 */
+    const want = r.subtree(pd);
+    log('　調べたときの見込み：部品のべ ' + want.leaf.toLocaleString() +
+        '　形 ' + want.items.toLocaleString());
+    if (want.items > 0 && cnt < want.items) {
+      log('🔴 <b>形が足りません。</b>見込み ' + want.items.toLocaleString() +
+          ' に対して、辿れた実体は ' + cnt.toLocaleString() + ' 個しかありません。' +
+          '**組立の木が不完全**か、**閉包の規則が足りていません**', 'ng');
+      log('　★上の「構造を読む上限」の行が出ていれば、それが原因です。' +
+          'そうでなければ規則の穴なので、この行を伝えてください', 'wa');
+    }
     /* ── 書き出し ── */
     const out = await exWrite(file, r, kp, name);
     /* ── 保存の口を先に出す（開くのに失敗しても手が残るように）── */
@@ -4574,7 +4681,9 @@ async function exRun(file, pd, name){
   } catch (e) {
     log('✗ 切り出せませんでした（' + String(e && e.message || e) + '）', 'ng');
     phSay('<b>切り出せませんでした</b><span>' + esc(String(e && e.message || e)) +
-          '</span><button id="phback">別のファイルを選ぶ</button>');
+          '</span>' +
+          (scanRes ? '<button id="phlist">切り出しの一覧に戻る</button>' : '') +
+          '<button id="phback">別のファイルを選ぶ</button>');
   }
 }
 

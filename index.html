@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824c</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824d</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -187,6 +187,12 @@ a{color:var(--accent-hi)}
 #bgw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
   padding:0 6px;cursor:pointer;white-space:nowrap;}
 #bgw input{margin:0;cursor:pointer;}
+/* 計測のラベル。★絵の上に浮かせる（当たりは取らない）*/
+#mlab{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;}
+#mlab .ml{position:absolute;transform:translate(-50%,-50%);
+  padding:2px 7px;border-radius:10px;font-size:12px;white-space:nowrap;
+  background:#1d4ed8;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.4);}
+#mlab .ml.pos{background:#0f766e;}
 </style>
 <main>
   <canvas id="cv"></canvas>
@@ -210,9 +216,13 @@ a{color:var(--accent-hi)}
       <span class="nsep"></span>
       <button data-t="view"><i>◳</i><span>向き</span></button>
       <button data-t="sec"><i>◫</i><span>断面</span></button>
+      <button data-t="meas"><i>⟷</i><span>計測</span></button>
+      <button data-t="expl"><i>❉</i><span>分解</span></button>
       <button data-t="tree"><i>☰</i><span>モデル</span></button>
     </div>
   </div>
+  <!-- ★計測のラベル。絵の上に HTML で置く（canvas に描くより字がきれい）-->
+  <div id="mlab"></div>
   <div id="tree">
     <div class="th"><b>部品ツリー</b><span class="sp"></span>
       <button id="trall" title="全部表示に戻します">全部表示</button>
@@ -389,7 +399,24 @@ function resize(){
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
-(function loop(){ controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+/* 🔴 **描画ループは宣言より前に走る。**
+   このループは module の途中で始まるが、`cubeDraw` / `mItems` は**この下**で
+   `const` / `let` で宣言されている。だから最初のフレームは **TDZ で落ちる**。
+   ⚠️ 以前は `try {} catch {}` で飲んでいた。**黙って飲むと、本当の失敗も見えなくなる**
+      （実際に「箱を押しても効かない」の原因を追うのに時間を使った）。
+   ★`var`（巻き上げられる）の旗を立てて、**用意ができてから呼ぶ**。 */
+var cubeReady = false;      /* ★ViewCube の用意ができたか */
+var measReady = false;      /* ★計測の用意ができたか */
+(function loop(){
+  controls.update();
+  renderer.render(scene, camera);
+  /* ★右上の向きの箱。⚠️ **本体を描いたあと**に一角へ描く */
+  if (cubeReady) cubeDraw();
+  /* ★計測のラベルはカメラが動くたびに置き直す。
+     ⚠️ 毎フレーム innerHTML を組むのは無駄なので、**計測が在るときだけ** */
+  if (measReady && mItems.length) mLabels();
+  requestAnimationFrame(loop);
+})();
 
 function fit(){
   if (!model) return;
@@ -467,6 +494,7 @@ async function draw(buf, kind, tAll){
   document.getElementById('bgw').style.display = '';
   treeShow(true);
   navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
+  toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
   secOn = false; secFlip = false;
   document.getElementById('secpos').value = 500;
   document.getElementById('secflip').classList.remove('on');
@@ -947,6 +975,20 @@ function optHtml(t){
       '<button data-r="x-">⟲X</button><button data-r="x+">⟳X</button>' +
       '<button data-r="y-">⟲Y</button><button data-r="y+">⟳Y</button>' +
       '<button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>';
+  if (t === 'meas')
+    return '<span class="lb">測る</span>' +
+      '<button data-m="dist" class="mt">⟷ 距離</button>' +
+      '<button data-m="ang" class="mt">∠ 角度</button>' +
+      '<button data-m="pos" class="mt">⌖ 座標</button>' +
+      '<span class="sep"></span>' +
+      '<button id="mundo">1つ消す</button><button id="mclear">全部消す</button>' +
+      /* 🔴 **近似だと必ず書く。** AutoDesk も `~` を付けている */
+      '<span class="lb">★およその値です（三角形に割った形の上で測っています）</span>';
+  if (t === 'expl')
+    return '<span class="lb">分解</span>' +
+      '<input type="range" id="expl" min="0" max="100" value="' + explVal + '">' +
+      '<span id="explval" class="lb">' + explVal + '%</span>' +
+      '<button id="explz">戻す</button>';
   if (t === 'sec')
     return '<button id="secon">切る</button>' +
       '<span class="lb">面を合わせる</span>' +
@@ -979,6 +1021,8 @@ function navSet(t){
   else navTool = t;
   if (isMode) navMode(t);
   else navMode('orbit');          /* 設定を出す道具のときは回せるままにする */
+  /* ⚠️ 「計測」から離れたら**拾うのをやめる**（別の道具を選んだのに点が増える）*/
+  if (navTool !== 'meas') { mTool = null; mPend = []; }
   const opt = document.getElementById('opt');
   const h = optHtml(navTool);
   opt.innerHTML = h;
@@ -1027,11 +1071,28 @@ document.getElementById('opt').addEventListener('click', ev => {
   if (b.classList.contains('smd')) {
     secSetMode(b.getAttribute('data-sm')); secSync(); return;
   }
+  if (b.classList.contains('mt')) {
+    const v = b.getAttribute('data-m');
+    mTool = (mTool === v) ? null : v;
+    mPend = [];
+    document.querySelectorAll('#opt .mt').forEach(x =>
+      x.classList.toggle('on', x.getAttribute('data-m') === mTool));
+    mHint();
+    return;
+  }
+  if (b.id === 'mundo') { mUndo(); return; }
+  if (b.id === 'mclear') { mClear(); return; }
+  if (b.id === 'explz') {
+    const r2 = document.getElementById('expl');
+    if (r2) { r2.value = 0; explVal = 0; explApply(); }
+    return;
+  }
   if (b.id === 'secflip') {
     secFlip = !secFlip; b.classList.toggle('on', secFlip); secApply(); return;
   }
 });
 document.getElementById('opt').addEventListener('input', ev => {
+  if (ev.target.id === 'expl') { explApply(); return; }
   if (ev.target.id === 'secpos') {
     secPosVal = Number(ev.target.value) || 0;
     secFromSlider();                    /* ★スライダ → 面の位置 */
@@ -1047,6 +1108,336 @@ document.getElementById('opt').addEventListener('input', ev => {
 })();
 
 navMode('orbit');
+
+/* ══════════════════════════════════════════════════════════════════════
+   ViewCube（右上の向きの箱）
+   ══════════════════════════════════════════════════════════════════════
+   ★いまどこから見ているかが**常に分かる**ようにする。面を押すとその向きから見る。
+   ⚠️ **renderer は増やさない**（WebGL の文脈が増える）。同じ renderer の
+      右上の一角に `setViewport` / `setScissor` で描く。
+   ⚠️ 一角の中の当たり判定は、**その一角を画面全体だと思って NDC を作り直す**。
+   ⚠️ 軸の呼び方はモデル依存。three.js の既定（**Y が上**）で
+      上＝+Y / 前＝+Z / 右＝+X とし、画面にもそう出す。
+   ══════════════════════════════════════════════════════════════════════ */
+const CUBE_PX = 96;                    /* 一角の大きさ（画素）*/
+const cubeScene = new THREE.Scene();
+/* 🔴 **投影の枠は箱にぴったり合わせる。**
+   枠（±1.6）が箱（1.7 の立方体＝半対角 1.47）より大きいと、
+   **一角の外周に箱の無い帯**ができて、そこを押しても当たらない
+   （2026-08-24 に「箱を押しても効かない」で踏んだ。原因は当たり判定ではなく**枠**）。
+   ★斜めから見たときの半対角は `size * √3/2`。枠 ±1.0 に対して
+     `size = 1.15` なら半対角 0.996 でちょうど収まる。 */
+const cubeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+cubeCam.position.set(0, 0, 5);
+cubeScene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
+
+/** 面のラベルを焼く */
+function cubeFace(text){
+  const S = 128, cv = document.createElement('canvas');
+  cv.width = S; cv.height = S;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#e8eef8'; c.fillRect(0, 0, S, S);
+  c.strokeStyle = '#8ea6c8'; c.lineWidth = 6; c.strokeRect(3, 3, S - 6, S - 6);
+  c.fillStyle = '#1f3557';
+  c.font = 'bold 46px "M PLUS 1p", sans-serif';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(text, S / 2, S / 2 + 2);
+  const t = new THREE.CanvasTexture(cv);
+  return new THREE.MeshBasicMaterial({ map: t });
+}
+/* ★`BoxGeometry` の面の順は +X, -X, +Y, -Y, +Z, -Z */
+const CUBE_FACES = ['右', '左', '上', '下', '前', '後'];
+const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 1.15),
+  CUBE_FACES.map(cubeFace));
+cubeScene.add(cubeMesh);
+
+/** 面 → 見る向き（`viewTo` の引数と、反対側かどうか）*/
+const CUBE_VIEW = {
+  '右': ['yz', false], '左': ['yz', true],
+  '上': ['zx', false], '下': ['zx', true],
+  '前': ['xy', false], '後': ['xy', true]
+};
+
+/** 一角に描く。★毎フレーム、本体を描いたあとに呼ぶ */
+function cubeDraw(){
+  if (!model) return;
+  const r = renderer.domElement;
+  const w = r.clientWidth, h = r.clientHeight;
+  /* ★箱の向きは**カメラの向きの逆**（モデルを見ている向きが箱に出る）*/
+  const q = new THREE.Quaternion();
+  camera.getWorldQuaternion(q);
+  cubeMesh.quaternion.copy(q).invert();
+  const dpr = renderer.getPixelRatio();
+  const x = (w - CUBE_PX - 10) * dpr, y = (h - CUBE_PX - 10) * dpr;
+  const sz = CUBE_PX * dpr;
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, y, sz, sz);
+  renderer.setScissor(x, y, sz, sz);
+  renderer.clearDepth();               /* ⚠️ 本体の奥行きを引き継がせない */
+  renderer.render(cubeScene, cubeCam);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w * dpr, h * dpr);
+}
+
+/** 一角を押したか。押した面の名前を返す（外なら null）*/
+function cubeHit(ev){
+  if (!model) return null;
+  const r = renderer.domElement.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const x0 = r.width - CUBE_PX - 10, y0 = 10;   /* ★上端から 10px（画面座標）*/
+  if (px < x0 || px > x0 + CUBE_PX || py < y0 || py > y0 + CUBE_PX) return null;
+  /* 🔴 **行列を自分で最新にする。**
+     箱の向きと投影は `cubeDraw`（描画ループ）が更新しているが、
+     **タブが裏に回ると `requestAnimationFrame` が止まる**ので、
+     フレームが1つも走っていない状態で押されることがある。
+     そのとき行列が古いと**当たり判定が静かに外れる**（押しても何も起きない）。
+     ★押された時点で必ず合わせる（安い処理）。 */
+  cubeCam.updateMatrixWorld(true);
+  cubeCam.updateProjectionMatrix();
+  cubeMesh.updateMatrixWorld(true);
+  /* ★一角を画面全体だと思って NDC を作り直す */
+  const nd = new THREE.Vector2(
+    ((px - x0) / CUBE_PX) * 2 - 1,
+    -((py - y0) / CUBE_PX) * 2 + 1);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(nd, cubeCam);
+  const hit = ray.intersectObject(cubeMesh, false)[0];
+  if (!hit) return null;
+  /* `materialIndex` が面の番号（+X,-X,+Y,-Y,+Z,-Z の順）*/
+  return CUBE_FACES[hit.face.materialIndex] || null;
+}
+
+/* ★押したら見る向きを変える。⚠️ 本体の操作より**先に**見る（回されないように）*/
+renderer.domElement.addEventListener('pointerdown', ev => {
+  const f = cubeHit(ev);
+  if (!f) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  const v = CUBE_VIEW[f];
+  if (!v) return;
+  flipView = v[1];
+  viewTo(v[0]);
+  log('「' + f + '」から見ています（Y が上）');
+}, true);                              /* ★capture。OrbitControls より先に受ける */
+
+cubeReady = true;          /* ★ここまでで ViewCube の用意ができた */
+
+/* ══════════════════════════════════════════════════════════════════════
+   計測（距離・角度・座標）
+   ══════════════════════════════════════════════════════════════════════
+   🔴 **値は必ず `~` を付けて出す。**
+      AutoDesk Viewer も `~ 21.0 mm` と出している。理由は同じで
+      **三角形に割った形の上で測っている**から。
+      ⚠️ 厳密に見せると、拾った点が稜線から少し外れているだけで数字が独り歩きする。
+   ★点は**三角形の頂点にスナップ**する（12px 以内）。平面の角や穴の縁は
+     **元の位置がそのまま残っている**ので、拾えれば精度が出る。
+     ⚠️ 円筒の面の途中を拾うと**弦**を測ることになる（避けようがない）。
+   ⚠️ 単位は occt が返した長さの単位（既定はミリ）。**読み替えていない。**
+   ══════════════════════════════════════════════════════════════════════ */
+let mTool = null, mPend = [], mItems = [];
+const mRay = new THREE.Raycaster();
+
+/** 画面の座標 → モデルの上の点。★三角形の頂点に近ければそこへ寄せる */
+function mPick(ev){
+  if (!model) return null;
+  const r = renderer.domElement.getBoundingClientRect();
+  const nd = new THREE.Vector2(
+    ((ev.clientX - r.left) / r.width) * 2 - 1,
+    -((ev.clientY - r.top) / r.height) * 2 + 1);
+  mRay.setFromCamera(nd, camera);
+  /* ⚠️ 見えていないものは拾わない（ツリーで消した部品を測らせない）*/
+  const hits = mRay.intersectObject(model, true).filter(h => {
+    let q = h.object;
+    while (q && q !== scene) { if (!q.visible) return false; q = q.parent; }
+    return true;
+  });
+  if (!hits.length) return null;
+  const h = hits[0];
+  const g = h.object.geometry, pos = g && g.attributes && g.attributes.position;
+  if (pos && h.face) {
+    let best = null, bestD = 1e9;
+    [h.face.a, h.face.b, h.face.c].forEach(i => {
+      const v = new THREE.Vector3().fromBufferAttribute(pos, i);
+      h.object.localToWorld(v);
+      const sp = v.clone().project(camera);
+      const dx = (sp.x - nd.x) * r.width / 2, dy = (sp.y - nd.y) * r.height / 2;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bestD) { bestD = d; best = v; }
+    });
+    if (best && bestD < 12) return { p: best, snap: true };
+  }
+  return { p: h.point.clone(), snap: false };
+}
+
+function mLine(a, b2){
+  const g = new THREE.BufferGeometry().setFromPoints([a, b2]);
+  const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x2f6fe0 }));
+  l.renderOrder = 999; l.material.depthTest = false;
+  scene.add(l); return l;
+}
+function mDot(pt){
+  const b2 = bbox();
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8),
+    new THREE.MeshBasicMaterial({ color: bgWhite ? 0x0a3f7a : 0xffffff }));
+  m.material.depthTest = false; m.renderOrder = 1000;
+  m.scale.setScalar((b2 ? b2.r : 50) * 0.012);
+  m.position.copy(pt);
+  scene.add(m); return m;
+}
+
+function mAdd(kind, pts){
+  const objs = [];
+  if (kind === 'dist') { objs.push(mLine(pts[0], pts[1]), mDot(pts[0]), mDot(pts[1])); }
+  else if (kind === 'ang') {
+    objs.push(mLine(pts[1], pts[0]), mLine(pts[1], pts[2]),
+              mDot(pts[0]), mDot(pts[1]), mDot(pts[2]));
+  } else objs.push(mDot(pts[0]));
+  mItems.push({ kind: kind, pts: pts.map(q => q.clone()), objs: objs });
+  mLabels();
+}
+
+/** 値の文字。★必ず `~` を付ける */
+function mText(it){
+  if (it.kind === 'dist') return '~ ' + it.pts[0].distanceTo(it.pts[1]).toFixed(1) + ' mm';
+  if (it.kind === 'ang') {
+    const a = it.pts[0].clone().sub(it.pts[1]), b2 = it.pts[2].clone().sub(it.pts[1]);
+    const d = a.length() * b2.length();
+    if (!d) return '~ 0 °';
+    const c = Math.max(-1, Math.min(1, a.dot(b2) / d));
+    return '~ ' + (Math.acos(c) * 180 / Math.PI).toFixed(1) + ' °';
+  }
+  const q = it.pts[0];
+  return '~ X ' + q.x.toFixed(1) + ' / Y ' + q.y.toFixed(1) + ' / Z ' + q.z.toFixed(1);
+}
+
+/** ラベルを置き直す（カメラが動くので毎フレーム）*/
+function mLabels(){
+  const box = document.getElementById('mlab');
+  if (!box) return;
+  if (!mItems.length) { if (box.innerHTML) box.innerHTML = ''; return; }
+  const r = renderer.domElement.getBoundingClientRect();
+  box.innerHTML = mItems.map(it => {
+    const at = it.kind === 'dist'
+      ? it.pts[0].clone().add(it.pts[1]).multiplyScalar(0.5)
+      : it.kind === 'ang' ? it.pts[1].clone() : it.pts[0].clone();
+    const sp = at.project(camera);
+    /* ⚠️ 後ろに回ったら出さない（画面の端に張り付くと嘘に見える）*/
+    if (sp.z > 1) return '';
+    const x = (sp.x + 1) / 2 * r.width, y = (-sp.y + 1) / 2 * r.height;
+    return '<span class="ml' + (it.kind === 'pos' ? ' pos' : '') + '" style="left:' +
+      Math.round(x) + 'px;top:' + Math.round(y) + 'px">' + esc(mText(it)) + '</span>';
+  }).join('');
+}
+
+function mUndo(){
+  const it = mItems.pop();
+  if (!it) { log('消すものがありません'); return; }
+  it.objs.forEach(o => scene.remove(o));
+  mLabels();
+}
+function mClear(){
+  mItems.forEach(it => it.objs.forEach(o => scene.remove(o)));
+  mItems = []; mPend = [];
+  mLabels();
+}
+/** モデルを読み直したときの後始末。★前のモデルの計測と分解を持ち越さない
+    ⚠️ 2か所（`draw` と動作確認の口）から呼ぶので**関数にする**
+       （同じ処理を2つ書くと片方だけ直す事故が起きる）*/
+function toolsReset(){
+  mClear();
+  mTool = null;
+  explParts = null;
+  explVal = 0;
+}
+
+function mHint(){
+  if (!mTool) return;
+  log(mTool === 'dist' ? '2点を押してください（点は角にくっつきます）'
+    : mTool === 'ang' ? '3点を押してください（真ん中が角の頂点）'
+                      : '1点を押してください（座標が出ます）');
+}
+
+/* ★押した所を拾う。⚠️ **回した（ドラッグした）ときは拾わない**
+   （OrbitControls と取り合いになるので、動いた距離で見分ける）*/
+let mDown = null;
+renderer.domElement.addEventListener('pointerdown', ev => {
+  mDown = { x: ev.clientX, y: ev.clientY };
+});
+renderer.domElement.addEventListener('pointerup', ev => {
+  if (!mTool || !mDown) { mDown = null; return; }
+  const moved = Math.abs(ev.clientX - mDown.x) + Math.abs(ev.clientY - mDown.y);
+  mDown = null;
+  if (moved > 4) return;                 /* 回した */
+  const hit = mPick(ev);
+  if (!hit) { log('モデルの上を押してください'); return; }
+  mPend.push(hit.p);
+  const need = mTool === 'dist' ? 2 : mTool === 'ang' ? 3 : 1;
+  if (mPend.length < need) {
+    log('あと ' + (need - mPend.length) + ' 点' + (hit.snap ? '（角にくっつきました）' : ''));
+    return;
+  }
+  mAdd(mTool, mPend);
+  mPend = [];
+});
+
+measReady = true;          /* ★ここまでで計測の用意ができた */
+
+/* ══════════════════════════════════════════════════════════════════════
+   分解（assembly を放射に離す）
+   ══════════════════════════════════════════════════════════════════════
+   ★中心から各部品の中心へ向かう方向に、割合で離す。
+   ⚠️ **断面のステンシルは作った時の行列を覚えている**ので、離したら更新する
+      （しないと蓋が元の場所に残る）。
+   ⚠️ **離す単位は「葉の部品」**（メッシュ単位で離すと1つの部品がばらける）。
+   ══════════════════════════════════════════════════════════════════════ */
+let explParts = null, explVal = 0;
+
+function explBuild(){
+  explParts = [];
+  if (!model) return;
+  const b2 = bbox(); if (!b2) return;
+  const leaves = [];
+  (function walk(o){
+    if (o.isMesh && o.parent === model) { leaves.push(o); return; }
+    if (!o.isGroup) return;
+    const g = o.children.filter(c => c.isGroup);
+    if (o !== model && g.length === 0) { leaves.push(o); return; }
+    o.children.forEach(walk);
+  })(model);
+  leaves.forEach(o => {
+    const bb = new THREE.Box3().setFromObject(o);
+    if (bb.isEmpty()) return;
+    const c = bb.getCenter(new THREE.Vector3()).sub(b2.c);
+    if (c.lengthSq() < 1e-9) c.set(0, 1, 0);
+    explParts.push({ o: o, base: o.position.clone(), dir: c.normalize() });
+  });
+}
+
+function explApply(){
+  const el2 = document.getElementById('expl');
+  if (el2) explVal = Number(el2.value) || 0;
+  const lb = document.getElementById('explval');
+  if (lb) lb.textContent = explVal + '%';
+  if (!explParts) explBuild();
+  const b2 = bbox();
+  const d = (b2 ? b2.r : 50) * 1.2 * (explVal / 100);
+  explParts.forEach(q => { q.o.position.copy(q.base).addScaledVector(q.dir, d); });
+  if (model) model.updateMatrixWorld(true);
+  secSyncMatrices();
+  mLabels();
+}
+
+/** ステンシルの行列を今のモデルに合わせ直す */
+function secSyncMatrices(){
+  secParts.forEach(q => {
+    q.src.forEach((o, i) => {
+      o.updateWorldMatrix(true, false);
+      const back = q.group.children[i * 2], front = q.group.children[i * 2 + 1];
+      if (back) { back.matrix.copy(o.matrixWorld); back.matrixWorldNeedsUpdate = true; }
+      if (front) { front.matrix.copy(o.matrixWorld); front.matrixWorldNeedsUpdate = true; }
+    });
+  });
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    スクリーンショット
@@ -1634,6 +2025,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     /* ★階層の読み込みもローカルで測れるように出す（STEP を用意しなくても
        `nodeToGroup` に occt と同じ形の入れ物を渡せば確かめられる）*/
     nodeToGroup, meshOf, treeRender, treeShow, triOf, countNodes,
+    cubeHit, cubeDraw, cubeMesh, cubeScene, cubeCam, mPick,
     /** 試すモデルを入れる（STEP の代わり）*/
     setModel(g) {
       if (model) scene.remove(model);
@@ -1645,6 +2037,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       document.getElementById('ph').style.display = 'none';   /* 案内を隠す */
       secOn = false; secFlip = false; secPosVal = 500;
       navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
+  toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
       secBuild(); secSync(); secApply();
     },
     setSec(on, axis, pos, flip) {

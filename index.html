@@ -360,12 +360,24 @@ renderer.localClippingEnabled = true;
 
 const secPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
 let secOn = false, secAxis = 'z', secFlip = false;
-let stencilGroup = null, capMesh = null;
+/* ★部品ごとに1組（ステンシルのグループ ＋ 蓋）。⚠️ 1組にまとめない（上の説明のとおり）*/
+let secParts = [];        /* [{group, cap}] */
+let secMerged = false;    /* 部品が多くて1色にまとめたか */
+/* 🔴 これを超えたら1色にまとめる。★部品ごとに裏・表・蓋で**描画が3倍**になるので、
+   多い assembly では効く。⚠️ まとめたことは画面に出す（黙って重くしない・黙って質を落とさない）*/
+const SEC_MAX_PARTS = 60;
 
-/** 蓋の材料。★片面だけ塗る（両面だと裏から見たとき手前に出る）*/
-function capMaterial(){
+/**
+ * 蓋の材料。★片面だけ塗る（両面だと裏から見たとき手前に出る）
+ * @param {THREE.Color} base その部品の色。★**部品ごとに色を変える**ので受け取る
+ *   ⚠️ 部品の色そのままだと「切った所」だと分からない。
+ *      橙のほうへ少し寄せて、**部品の区別と「切り口」の両方**が読めるようにする。
+ */
+function capMaterial(base){
+  const col = (base ? base.clone() : new THREE.Color(0x9fb4cc))
+    .lerp(new THREE.Color(0xff7a2f), 0.35);
   return new THREE.MeshStandardMaterial({
-    color: 0xff8a3d, metalness: .1, roughness: .8,
+    color: col, metalness: .1, roughness: .8,
     stencilWrite: true, stencilRef: 0,
     stencilFunc: THREE.NotEqualStencilFunc,
     stencilFail: THREE.ReplaceStencilOp,
@@ -388,36 +400,60 @@ function stencilMaterial(side, op){
 
 /** モデルを読み直したら作り直す */
 function secBuild(){
-  if (stencilGroup) { scene.remove(stencilGroup); stencilGroup = null; }
-  if (capMesh) { scene.remove(capMesh); capMesh = null; }
+  /* 前のものを片付ける */
+  secParts.forEach(p => { scene.remove(p.group); scene.remove(p.cap); });
+  secParts = []; secMerged = false;
   if (!model) return;
   const b = bbox(); if (!b) return;
 
-  /* ①② ステンシルに中身を書く */
-  const g = new THREE.Group();
-  model.traverse(o => {
-    if (!o.isMesh) return;
-    const back = new THREE.Mesh(o.geometry,
-      stencilMaterial(THREE.BackSide, THREE.IncrementWrapStencilOp));
-    const front = new THREE.Mesh(o.geometry,
-      stencilMaterial(THREE.FrontSide, THREE.DecrementWrapStencilOp));
-    back.renderOrder = 1; front.renderOrder = 2;
-    back.matrixAutoUpdate = false; front.matrixAutoUpdate = false;
-    o.updateWorldMatrix(true, false);
-    back.matrix.copy(o.matrixWorld); front.matrix.copy(o.matrixWorld);
-    g.add(back); g.add(front);
-  });
-  g.visible = false;
-  scene.add(g); stencilGroup = g;
+  const meshes = [];
+  model.traverse(o => { if (o.isMesh) meshes.push(o); });
+  if (!meshes.length) return;
 
-  /* ③ 蓋。★モデルより大きく作って、面に合わせて置く */
+  /* 🔴 部品が多すぎるときは1色にまとめる（描画が3倍になるため）。
+     ⚠️ まとめると**視線方向に重なった部品で蓋が抜ける**ことがある。
+        黙ってやらず、画面に出す。 */
+  secMerged = meshes.length > SEC_MAX_PARTS;
+  const groups = secMerged ? [meshes] : meshes.map(m => [m]);
+  if (secMerged)
+    log('⚠️ 部品が ' + meshes.length + ' 個あるので、断面の切り口は1色にまとめます' +
+        '（部品ごとに塗ると描画が3倍になります）。重なった部品では切り口が抜けることがあります', 'wa');
+
   const size = b.r * 4;
-  capMesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMaterial());
-  capMesh.renderOrder = 3;
-  capMesh.visible = false;
-  /* ★蓋の裏側にモデルが描かれないように、少しだけ手前に出す */
-  capMesh.onAfterRender = function(r){ r.clearStencil(); };
-  scene.add(capMesh);
+  groups.forEach((set, i) => {
+    /* ①② ステンシルに「その部品の中身」を書く */
+    const g = new THREE.Group();
+    set.forEach(o => {
+      const back = new THREE.Mesh(o.geometry,
+        stencilMaterial(THREE.BackSide, THREE.IncrementWrapStencilOp));
+      const front = new THREE.Mesh(o.geometry,
+        stencilMaterial(THREE.FrontSide, THREE.DecrementWrapStencilOp));
+      /* ★描く順：この部品のステンシル → この部品の蓋 → 次の部品 … → モデル本体 */
+      back.renderOrder = i * 2 + 1; front.renderOrder = i * 2 + 2;
+      back.matrixAutoUpdate = false; front.matrixAutoUpdate = false;
+      o.updateWorldMatrix(true, false);
+      back.matrix.copy(o.matrixWorld); front.matrix.copy(o.matrixWorld);
+      g.add(back); g.add(front);
+    });
+    g.visible = false;
+    scene.add(g);
+
+    /* ③ 蓋。★その部品の色から作る（部品を見分けられるように）*/
+    const base = set[0].material && set[0].material.color ? set[0].material.color : null;
+    const cap = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMaterial(base));
+    cap.renderOrder = i * 2 + 2.5;
+    cap.visible = false;
+    /* 🔴 **この部品の蓋を描いたらステンシルを消す。**
+       消さないと次の部品の数え上げに前の部品の数が残る（three.js の例と同じ）*/
+    cap.onAfterRender = function(r){ r.clearStencil(); };
+    scene.add(cap);
+
+    secParts.push({ group: g, cap: cap });
+  });
+
+  /* ★モデル本体は**全部の蓋より後**に描く（先に描くと蓋に隠れる）*/
+  const last = groups.length * 2 + 5;
+  meshes.forEach(o => { o.renderOrder = last; });
   secApply();
 }
 
@@ -443,18 +479,20 @@ function secApply(){
     o.material.clippingPlanes = secOn ? [secPlane] : [];
     o.material.needsUpdate = true;
   }});
-  if (stencilGroup) stencilGroup.visible = secOn;
-  if (capMesh) {
-    capMesh.visible = secOn;
+  secParts.forEach(p => {
+    p.group.visible = secOn;
+    p.cap.visible = secOn;
+    if (!secOn) return;
     /* 蓋を面に合わせる */
-    capMesh.position.copy(pt);
-    capMesh.lookAt(pt.clone().add(nrm));
+    p.cap.position.copy(pt);
+    p.cap.lookAt(pt.clone().add(nrm));
     /* ★ほんの少し内側へ（同じ位置だと自分自身に切られてちらつく）*/
-    capMesh.position.addScaledVector(nrm, -b.r * 1e-4);
-    capMesh.updateMatrixWorld();
-  }
+    p.cap.position.addScaledVector(nrm, -b.r * 1e-4);
+    p.cap.updateMatrixWorld();
+  });
   if (valEl) valEl.textContent = secOn
-    ? (secAxis.toUpperCase() + ' = ' + at.toFixed(2))
+    ? (secAxis.toUpperCase() + ' = ' + at.toFixed(2) +
+       (secMerged ? '（切り口は1色）' : '（切り口は部品ごとの色）'))
     : '切っていません';
 }
 
@@ -854,8 +892,9 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
   window.__viewer = {
     THREE, scene, camera, controls,
     get model() { return model; },
-    get sec() { return { on: secOn, axis: secAxis, flip: secFlip,
-                         plane: secPlane, cap: capMesh, stencil: stencilGroup }; },
+    get sec() { return { on: secOn, axis: secAxis, flip: secFlip, plane: secPlane,
+                         parts: secParts, merged: secMerged,
+                         capColors: secParts.map(p => '#' + p.cap.material.color.getHexString()) }; },
     viewTo, spin, secApply, secBuild, bbox,
     /** 試すモデルを入れる（STEP の代わり）*/
     setModel(g) {

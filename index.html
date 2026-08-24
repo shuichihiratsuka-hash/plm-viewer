@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824t</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824u</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -531,7 +531,7 @@ var measReady = false;      /* ★計測の用意ができたか */
   controls.update();
   /* ★計測の線をカメラ側へごくわずか寄せる（奥行きの取り合いを避ける）。
      ⚠️ **描く前**でないと意味が無い。 */
-  if (measReady) mNudge();
+  if (measReady) { mNudge(); mPxUpdate(); }
   renderer.render(scene, camera);
   /* ★右上の向きの箱。⚠️ **本体を描いたあと**に一角へ描く */
   if (cubeReady) cubeDraw();
@@ -2262,6 +2262,41 @@ function depthPair(o){
   return g;
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   印の大きさを**画面上で一定**に保つ
+   ══════════════════════════════════════════════════════════════════
+   🔴 いままで印の大きさは**モデルの外形に比例**していたので、
+      寄れば寄るほど**画面上で巨大**になっていた（本人の指摘）。
+   ★遠近法のカメラでは、N 画素に見える世界の大きさは
+        `2 × 距離 × tan(視野角/2) × (N / 画面の高さ)`
+     なので、毎フレーム `大きさ = 距離 × k × 望みの画素数` を当てる。
+   ⚠️ **円（直径の表示）は実寸のまま**（形そのものなので、画面一定にしたら嘘）。
+   ⚠️ 濃い／薄いの2枚それぞれに当てる（片方だけだと大きさが食い違う）。
+   ══════════════════════════════════════════════════════════════════ */
+const mPxList = [];
+/**
+ * @param {THREE.Object3D} o 大きさを保つもの
+ * @param {number} px 形の「1単位」を何画素に見せたいか
+ */
+function mPxKeep(o, px){
+  o.traverse(x => { if (x.isMesh || x.isLine) mPxList.push({ o: x, px: px }); });
+}
+const mPxV = new THREE.Vector3();
+function mPxUpdate(){
+  if (!mPxList.length) return;
+  const h = renderer.domElement.clientHeight || 1;
+  /* ★1画素あたりの「距離1あたりの世界の大きさ」*/
+  const k = 2 * Math.tan(camera.fov * Math.PI / 360) / h;
+  for (let i = mPxList.length - 1; i >= 0; i--) {
+    const it = mPxList[i];
+    if (!it.o.parent) { mPxList.splice(i, 1); continue; }   /* 消えたものは外す */
+    it.o.updateWorldMatrix(true, false);
+    it.o.getWorldPosition(mPxV);
+    const d = camera.position.distanceTo(mPxV);
+    it.o.scale.setScalar(Math.max(d * k * it.px, 1e-9));
+  }
+}
+
 /**
  * 奥行きの取り合いを避ける。★毎フレーム**カメラ側へごくわずか**寄せる。
  * ⚠️ 面の上に乗っている線は、これをやらないと点線のようにちらつく。
@@ -2291,9 +2326,10 @@ function mDot(pt){
   const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8),
     new THREE.MeshBasicMaterial({ color: bgWhite ? 0x0a3f7a : 0xffffff }));
   m.renderOrder = 1000;
-  m.scale.setScalar((b2 ? b2.r : 50) * 0.012);
   m.position.copy(pt);
   const pair = depthPair(m);
+  /* ★半径 4px（＝直径 8px）で画面一定。寄っても離れても同じ大きさ */
+  mPxKeep(pair, 4);
   scene.add(pair); return pair;
 }
 
@@ -2625,10 +2661,15 @@ function snapShow(hit){
     /* ★吸い付きの印も「見えている所は濃く、隠れている所は薄く」。
        ⚠️ 印は**必ず見えてほしい**ので、薄い方の透過は少し強めにする（0.35）。 */
     [sq, ci, rg].forEach(o => { o.renderOrder = 1200; });
-    snapMark.add(depthPair(sq), depthPair(ci), depthPair(rg));
+    const gs = [depthPair(sq), depthPair(ci), depthPair(rg)];
+    snapMark.add(gs[0], gs[1], gs[2]);
     snapMark.children.forEach(g => {
       if (g.children[0] && g.children[0].material) g.children[0].material.opacity = 0.35;
     });
+    /* ★画面一定の大きさ（角の四角 11px／稜線の丸 直径 9px／面の輪 直径 13px）*/
+    mPxKeep(gs[0], 11);
+    mPxKeep(gs[1], 4.5);
+    mPxKeep(gs[2], 6);
     scene.add(snapMark);
   }
   if (!snapTag) {
@@ -2641,19 +2682,14 @@ function snapShow(hit){
     snapTag.style.display = 'none';
     return;
   }
-  const b = bbox(), sz = (b ? b.r : 50);
   const isCorner = hit.snap === '稜線の点' || hit.snap === '頂点' || hit.snap === '頂点（およそ）';
   const isEdge = hit.snap === '稜線';
   snapMark.visible = true;
   snapMark.position.copy(hit.p);
-  /* ⚠️ 中身は `depthPair` の Group（濃い／薄いの2枚）。**大きさは中の2枚**に当てる */
-  const setSc = (g, s) => g.children.forEach(c => c.scale.setScalar(s));
+  /* ★大きさは `mPxUpdate` が毎フレーム当てる（画面上で一定）。ここでは出し入れだけ */
   snapMark.children[0].visible = isCorner;
   snapMark.children[1].visible = isEdge;
   snapMark.children[2].visible = !isCorner && !isEdge;      /* 面 → 輪 */
-  setSc(snapMark.children[0], sz * 0.020);
-  setSc(snapMark.children[1], sz * 0.013);
-  setSc(snapMark.children[2], sz * 0.016);
   /* ★輪はカメラの方を向かせる（斜めだと潰れて見えない）*/
   snapMark.children[2].children.forEach(c => c.quaternion.copy(camera.quaternion));
   /* 文字はカーソルの少し右上 */
@@ -4522,8 +4558,18 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
     renderer,
     scanStep, scanShow, partAxis, cubeSpin, faceFit, mPickFace, mItems: () => mItems,
+    /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。
+         ⚠️ 隠れたタブでは rAF が止まるので、確認はここから直に叩く） */
+    snapShow, rubShow, mPxUpdate,
     setMTool(t){ mTool = t; mPend = []; mFacePend = []; },
-    renderNow() { renderer.render(scene, camera); },
+    /* 🔴 **本番の描画ループと同じ順で通す。**
+       ⚠️ ループの中でやっている前処理（線を寄せる・印の大きさを画面一定にする）を
+          ここで省くと、**確認の口が本番と違う道**を通ることになる。
+          （同じ事故を一度やった。setModel が finishModel を写していた件） */
+    renderNow() {
+      if (measReady) { mNudge(); mPxUpdate(); }
+      renderer.render(scene, camera);
+    },
     setSec(on, axis, pos, flip) {
       secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;
       if (pos !== undefined) {

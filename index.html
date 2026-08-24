@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824g</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824h</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -1251,17 +1251,31 @@ navMode('orbit');
 let bomOpen = false;
 let bomRows = [];          /* 画面に出している行。★保存しない（読み直しで捨てる）*/
 
-/** 名前を揃える。★ここが突き合わせの精度をほぼ決める */
+/* ★CAD の拡張子。ファイル名がそのまま節点名になっているので落とす */
+const CAD_EXT =
+  /(sldprt|sldasm|catpart|catproduct|gltf|iges|step|prt|asm|par|psm|ipt|iam|xt|xb|stp|igs|glb|stl)$/;
+
+/**
+ * 名前を揃える。★ここが突き合わせの精度をほぼ決める。
+ *
+ * 🔴 **記号を落としてから拡張子を落とす。この順でないと効かない。**
+ *    ⚠️ `GLTFLoader` は節点名を**削る**（`THREE.PropertyBinding.sanitizeNodeName`）。
+ *       実測（three 0.185.1）：**`. [ ] : /` を消し、空白を `_` に**する。
+ *         `めっき治具_トップフランジ.SLDPRT` → `めっき治具_トップフランジSLDPRT`
+ *         `めっき治具 底板`                 → `めっき治具_底板`
+ *    ⇒ **GLB を通ると拡張子の前のドットが消える。** 先に `\.sldprt$` を探していた
+ *       ので当たらず、**同じ部品が「モデルだけ」と「E-BOM だけ」の両方に出た**
+ *       （2026-08-24、本番サイトに実物の GLB を読ませて捕まえた）。
+ *    ⇒ 記号（`.` も `_` も）を全部落としてから、末尾の拡張子の綴りを落とす。
+ */
 function bomKey(t){
   let x = String(t == null ? '' : t);
   try { x = x.normalize('NFKC'); } catch (e) {}   /* 全角→半角 */
   x = x.toLowerCase();
-  /* ★CAD の拡張子を落とす（ファイル名がそのまま節点名になっている）*/
-  x = x.replace(
-    /\.(sldprt|sldasm|prt|asm|par|psm|ipt|iam|catpart|catproduct|x_t|x_b|stp|step|igs|iges|glb|gltf|stl)$/,
-    '');
-  /* ★記号・空白・括弧を落とす */
-  x = x.replace(/[\s\u3000_\-()\[\]{}「」【】。、,.\/\\]/g, '');
+  /* ★① 記号・空白・括弧を落とす（GLB を通ると `.` は既に消えている）*/
+  x = x.replace(/[\s　_\-()\[\]{}「」【】。、,.:\/\\]/g, '');
+  /* ★② そのあとで拡張子の綴りを落とす */
+  x = x.replace(CAD_EXT, '');
   return x;
 }
 /** 実体の連番（`PLATE_1`）を落とした鍵。★**副の鍵**として併記して引く */

@@ -183,6 +183,34 @@ a{color:var(--accent-hi)}
 #tree .tn{overflow:hidden;text-overflow:ellipsis;}
 #tree .tc{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
 #treebtn{display:none;}
+/* E-BOM 突き合わせ。★ツリーの反対側（右）に出す。両方開けるようにする */
+#bom{position:absolute;right:10px;top:10px;bottom:10px;width:330px;z-index:5;
+  display:none;flex-direction:column;background:rgba(8,13,24,.92);
+  border:1px solid #1e2a44;border-radius:8px;overflow:hidden;}
+#bom .th{display:flex;align-items:center;gap:6px;padding:7px 9px;
+  border-bottom:1px solid #1e2a44;font-size:12px;color:#c9d6ee;}
+#bom .th b{font-size:12px;} #bom .th .sp{flex:1;}
+#bom .bi{padding:7px 9px;border-bottom:1px solid #1e2a44;}
+#bom textarea{width:100%;height:96px;box-sizing:border-box;resize:vertical;
+  background:#0b1220;color:#dbe6fb;border:1px solid #23324f;border-radius:5px;
+  padding:6px 7px;font:12px/1.5 var(--mono);}
+#bom .bb{display:flex;gap:5px;margin-top:6px;}
+#bom .bn{font-size:11px;color:#7f8fb0;margin-top:5px;line-height:1.5;}
+#bom .bl{flex:1;overflow:auto;padding:4px 0;}
+#bom .bg{padding:5px 9px 3px;font-size:11px;color:#8fa2c6;
+  border-top:1px solid #16203a;margin-top:4px;}
+#bom .bg:first-child{border-top:none;margin-top:0;}
+#bom .br{display:flex;align-items:center;gap:5px;padding:3px 9px;font-size:12px;
+  color:#c9d6ee;cursor:pointer;white-space:nowrap;}
+#bom .br:hover{background:#16203a;}
+#bom .br.sel{background:#1b2b4d;}
+#bom .bk{width:13px;text-align:center;flex:none;}
+#bom .br.ok .bk{color:#3fb950;} #bom .br.mo .bk{color:#e3b341;}
+#bom .br.eo .bk{color:#f85149;}
+#bom .bt{overflow:hidden;text-overflow:ellipsis;}
+#bom .bq{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
+#bom .bq.ng{color:#e3b341;}
+#bom .bw{padding:8px 9px;font-size:11px;color:#8fa2c6;line-height:1.6;}
 /* 白背景のチェックボックス。★ヘッダのボタンと高さを揃える */
 #bgw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
   padding:0 6px;cursor:pointer;white-space:nowrap;}
@@ -220,6 +248,7 @@ a{color:var(--accent-hi)}
       <button data-t="expl"><i>❉</i><span>分解</span></button>
       <button data-t="disp"><i>◐</i><span>表示</span></button>
       <button data-t="tree"><i>☰</i><span>モデル</span></button>
+      <button data-t="bom"><i>⇄</i><span>E-BOM</span></button>
     </div>
   </div>
   <!-- ★計測のラベル。絵の上に HTML で置く（canvas に描くより字がきれい）-->
@@ -229,6 +258,26 @@ a{color:var(--accent-hi)}
       <button id="trall" title="全部表示に戻します">全部表示</button>
       <button id="trclose" title="閉じます">✕</button></div>
     <div class="tl" id="treel"></div>
+  </div>
+  <!-- E-BOM 突き合わせ。★貼り付けて比べるだけ。**何も保存しない** -->
+  <div id="bom">
+    <div class="th"><b>E-BOM 突き合わせ</b><span class="sp"></span>
+      <button id="bmclr" title="貼り付けた E-BOM と結果を消します">クリア</button>
+      <button id="bmclose" title="閉じます">✕</button></div>
+    <div class="bi">
+      <textarea id="bmtx" spellcheck="false"
+        placeholder="E-BOM の子部品をここに貼り付けます（1行1部品）&#10;タブ／カンマ区切りなら「図番　品名　数量」も読みます&#10;&#10;例&#10;2F0001-001&#9;トップフランジ&#9;1&#10;PTFH6-20&#9;六角樹脂ボルト&#9;8"></textarea>
+      <div class="bb">
+        <button id="bmrun">突き合わせる</button>
+        <button id="bmsel" title="モデルだけにある部品をツリーの☑にします">
+          モデルだけを☑</button>
+      </div>
+      <div class="bn">★<b>名前</b>で比べます（図番は手掛かりとして併記）。<br>
+        ★<b>平らな集合</b>の比較です。階層（親子）は比べません。<br>
+        🔴 <b>結果は保存しません。</b>モデルを読み直すと消えます。</div>
+    </div>
+    <div class="bl" id="bml"><div class="bw">
+      E-BOM を貼り付けて「突き合わせる」を押してください。</div></div>
   </div>
   <div id="ph"><b>STEP を選んでください</b>
     <span><code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code> が読めます。<br>
@@ -522,6 +571,8 @@ function finishModel(g, tAll, tri){
   document.getElementById('bar').style.display = 'flex';
   document.getElementById('shot').style.display = '';
   document.getElementById('bgw').style.display = '';
+  /* 🔴 **突き合わせの結果は持ち越さない。** 別のモデルの結果が残ると誤読する */
+  bomClear(); bomShow(false);
   treeShow(true);
   navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
   toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
@@ -1062,6 +1113,7 @@ function navSet(t){
   if (t === 'home') { flipView = false; viewTo('iso'); return; }
   if (t === 'fit')  { fit(); return; }
   if (t === 'tree') { treeShow(!treeOpen); navSync(); return; }
+  if (t === 'bom')  { bomShow(!bomOpen); navSync(); return; }
   if (!isMode && navTool === t) { navTool = 'orbit'; }
   else navTool = t;
   if (isMode) navMode(t);
@@ -1084,7 +1136,7 @@ function navSync(){
   document.querySelectorAll('#nav button').forEach(b => {
     const t = b.getAttribute('data-t');
     b.classList.toggle('on',
-      t === navTool || (t === 'tree' && treeOpen));
+      t === navTool || (t === 'tree' && treeOpen) || (t === 'bom' && bomOpen));
   });
 }
 
@@ -1183,6 +1235,200 @@ document.getElementById('opt').addEventListener('input', ev => {
 })();
 
 navMode('orbit');
+
+/* ══════════════════════════════════════════════════════════════════════
+   E-BOM 突き合わせ
+   ══════════════════════════════════════════════════════════════════════
+   🔴 **フラグは持たない。** `localStorage` にも書かない。モデルを読み直したら
+      消える。「クリア」で即消せる。**その場の作業**であって記録ではない（本人の指示）。
+   ★突き合わせるのは **名前**。図番は手掛かりとして添えるだけ。
+      ⚠️ 実物の STEP の節点名は CAD のファイル名（`めっき治具_トップフランジ`、
+         `（ミスミ）PTFH6-20_六角樹脂ボルト`）で、**図番が入っていない**。
+   ★突き合わせるのは **平らな集合**（葉の部品）。**階層は比べない。**
+      ⚠️ CAD の組立の括り方と E-BOM の括り方は一致しないので、階層を照合すると
+         **正しいのに不一致**が大量に出て使えなくなる。
+   ══════════════════════════════════════════════════════════════════════ */
+let bomOpen = false;
+let bomRows = [];          /* 画面に出している行。★保存しない（読み直しで捨てる）*/
+
+/** 名前を揃える。★ここが突き合わせの精度をほぼ決める */
+function bomKey(t){
+  let x = String(t == null ? '' : t);
+  try { x = x.normalize('NFKC'); } catch (e) {}   /* 全角→半角 */
+  x = x.toLowerCase();
+  /* ★CAD の拡張子を落とす（ファイル名がそのまま節点名になっている）*/
+  x = x.replace(
+    /\.(sldprt|sldasm|prt|asm|par|psm|ipt|iam|catpart|catproduct|x_t|x_b|stp|step|igs|iges|glb|gltf|stl)$/,
+    '');
+  /* ★記号・空白・括弧を落とす */
+  x = x.replace(/[\s\u3000_\-()\[\]{}「」【】。、,.\/\\]/g, '');
+  return x;
+}
+/** 実体の連番（`PLATE_1`）を落とした鍵。★**副の鍵**として併記して引く */
+function bomKey2(t){
+  let x = String(t == null ? '' : t).replace(/[_\-\s]0*\d{1,2}$/, '');
+  return bomKey(x);
+}
+
+/** 貼り付けた文字を読む。★タブ／カンマ区切りなら図番・品名・数量も拾う */
+function bomParse(text){
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const raw = line.trim();
+    if (!raw) return;
+    let f = raw.split(/\t|,/).map(x => x.trim()).filter(x => x !== '');
+    if (!f.length) return;
+    let qty = 0;
+    /* ★最後が裸の数字なら数量とみなす（1列だけのときは名前として残す）*/
+    if (f.length >= 2 && /^\d+(\.\d+)?$/.test(f[f.length - 1])) qty = Number(f.pop());
+    let no = '', nm = '';
+    /* ★図番らしいか：英数と `-` だけ・数字を含む・4文字以上 */
+    const looksNo = x => /^[0-9A-Za-z][0-9A-Za-z\-_]{3,}$/.test(x) && /\d/.test(x);
+    if (f.length >= 2 && looksNo(f[0])) { no = f.shift(); nm = f.join(' '); }
+    else if (f.length === 1 && looksNo(f[0])) { no = f[0]; nm = f[0]; }
+    else nm = f.join(' ');
+    out.push({ no: no, name: nm, qty: qty });
+  });
+  return out;
+}
+
+/** 突き合わせて描く */
+function bomRun(){
+  const box = document.getElementById('bml');
+  if (!box) return;
+  if (!model) {
+    box.innerHTML = '<div class="bw">先にモデルを読み込んでください。</div>';
+    return;
+  }
+  const eb = bomParse(document.getElementById('bmtx').value);
+  if (!eb.length) {
+    box.innerHTML = '<div class="bw">E-BOM が空です。1行1部品で貼り付けてください。</div>';
+    bomRows = [];
+    return;
+  }
+  /* ── モデル側の索引。★主の鍵と副の鍵の両方から引けるようにする ── */
+  const idx = new Map();     /* 鍵 → [部品] */
+  const parts = [];          /* 葉の部品（出た順）*/
+  walkParts(o => {
+    const nm = o.name || '';
+    if (!nm) return;                       /* 名前の無い葉は突き合わせられない */
+    parts.push(o);
+    const k1 = bomKey(nm), k2 = bomKey2(nm);
+    [k1, k2].forEach(k => {
+      if (!k) return;
+      if (!idx.has(k)) idx.set(k, []);
+      const a = idx.get(k);
+      if (a.indexOf(o) < 0) a.push(o);
+    });
+  });
+  const used = new Set();
+  const both = [], ebOnly = [];
+  eb.forEach(r => {
+    const k1 = bomKey(r.name), k2 = bomKey2(r.name), kn = bomKey(r.no);
+    let hit = (k1 && idx.get(k1)) || (k2 && idx.get(k2)) || null;
+    let how = hit ? '名前' : '';
+    /* ★名前で当たらなければ**図番が名前に含まれているか**を見る（副の手掛かり）*/
+    if (!hit && kn && kn.length >= 4) {
+      const a = parts.filter(o => bomKey(o.name).indexOf(kn) >= 0);
+      if (a.length) { hit = a; how = '図番'; }
+    }
+    if (hit && hit.length) {
+      hit.forEach(o => used.add(o));
+      both.push({ eb: r, os: hit, how: how });
+    } else ebOnly.push({ eb: r });
+  });
+  const moOnly = parts.filter(o => !used.has(o));
+
+  /* ── 描く ── */
+  const esc2 = t => esc(t);
+  const line = (cls, mk, txt, right, i) =>
+    '<div class="br ' + cls + '" data-i="' + i + '">' +
+      '<span class="bk">' + mk + '</span>' +
+      '<span class="bt">' + esc2(txt) + '</span>' +
+      '<span class="bq' + (right && right.ng ? ' ng' : '') + '">' +
+        esc2(right ? right.t : '') + '</span></div>';
+  bomRows = [];
+  let h = '';
+  h += '<div class="bg">○ 両方にある（' + both.length + '）</div>';
+  both.forEach(x => {
+    const i = bomRows.length; bomRows.push({ os: x.os });
+    const cnt = x.os.length;
+    const ng = x.eb.qty > 0 && cnt !== x.eb.qty;
+    h += line('ok', '○', (x.eb.no ? x.eb.no + '　' : '') + x.eb.name,
+      { t: (x.eb.qty ? 'BOM ' + x.eb.qty + ' / ' : '') + 'モデル ' + cnt +
+           (x.how === '図番' ? '（図番で一致）' : ''), ng: ng }, i);
+  });
+  h += '<div class="bg">▲ モデルだけにある（' + moOnly.length +
+       '）　★E-BOM 漏れの候補</div>';
+  moOnly.forEach(o => {
+    const i = bomRows.length; bomRows.push({ os: [o] });
+    h += line('mo', '▲', o.name, { t: '' }, i);
+  });
+  h += '<div class="bg">▼ E-BOM だけにある（' + ebOnly.length +
+       '）　★モデル未反映、または形の無い品目</div>';
+  ebOnly.forEach(x => {
+    const i = bomRows.length; bomRows.push({ os: [] });
+    h += line('eo', '▼', (x.eb.no ? x.eb.no + '　' : '') + x.eb.name,
+      { t: x.eb.qty ? 'BOM ' + x.eb.qty : '' }, i);
+  });
+  h += '<div class="bw">★行を押すとその部品を☑にします（ツリーと連動）。<br>' +
+       '⚠️ <b>名前が違えば「無い」と出ます。</b>CAD のファイル名と E-BOM の品名が' +
+       'ずれている場合は、ここでは合わせられません。<br>' +
+       '⚠️ モデルの個数は<b>節点の数</b>です。CAD が並びを1節点にまとめていると' +
+       '実数と合いません。</div>';
+  box.innerHTML = h;
+  log('E-BOM 突き合わせ：両方 ' + both.length + '　モデルだけ ' + moOnly.length +
+      '　E-BOM だけ ' + ebOnly.length + '（保存はしません）');
+}
+
+/** 行を押したら☑にする（ツリーと同じ `_sel`）*/
+document.getElementById('bml').addEventListener('click', ev => {
+  const r = ev.target.closest ? ev.target.closest('.br') : null;
+  if (!r) return;
+  const rec = bomRows[Number(r.getAttribute('data-i'))];
+  if (!rec || !rec.os.length) return;
+  const on = !r.classList.contains('sel');
+  rec.os.forEach(o => o.traverse(x => { x._sel = on; }));
+  r.classList.toggle('sel', on);
+  treeRender();
+  if (dGhost) applyGhost();
+});
+
+document.getElementById('bmrun').addEventListener('click', bomRun);
+document.getElementById('bmsel').addEventListener('click', () => {
+  /* ★「モデルだけ」を全部☑にする。★見付けた物を 3D で追うため */
+  let k = 0;
+  document.querySelectorAll('#bml .br.mo').forEach(r => {
+    const rec = bomRows[Number(r.getAttribute('data-i'))];
+    if (!rec) return;
+    rec.os.forEach(o => o.traverse(x => { x._sel = true; }));
+    r.classList.add('sel'); k++;
+  });
+  treeRender();
+  if (dGhost) applyGhost();
+  log(k ? ('モデルだけにある ' + k + ' 件を☑にしました') :
+          '「モデルだけ」はありません', k ? '' : 'ok');
+});
+function bomClear(){
+  const t = document.getElementById('bmtx');
+  if (t) t.value = '';
+  bomRows = [];
+  const box = document.getElementById('bml');
+  if (box) box.innerHTML = '<div class="bw">' +
+    'E-BOM を貼り付けて「突き合わせる」を押してください。</div>';
+}
+document.getElementById('bmclr').addEventListener('click', () => {
+  bomClear();
+  log('E-BOM 突き合わせを消しました（保存していないので何も残りません）');
+});
+document.getElementById('bmclose').addEventListener('click', () => {
+  bomShow(false); navSync();
+});
+function bomShow(on){
+  bomOpen = !!on;
+  document.getElementById('bom').style.display = bomOpen ? 'flex' : 'none';
+  if (bomOpen) document.getElementById('bmtx').focus();
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    ViewCube（右上の向きの箱）
@@ -1763,6 +2009,23 @@ function triOf(o){
     if (x.isMesh && x.geometry && x.geometry.index) t += x.geometry.index.count / 3;
   });
   return t;
+}
+
+/**
+ * **葉の部品を1つずつ渡す。**
+ * ★ツリーの行の作り方と**同じ規則**で葉を決める（別に書くと食い違う）。
+ * ⚠️ 折りたたみ（`_tclosed`）は見ない。畳んでいても部品は部品。
+ */
+function walkParts(cb){
+  if (!model) return;
+  (function walk(o, depth){
+    if (!isCont(o) && !o.isMesh) return;
+    const grpKids = o.children.filter(isCont);
+    const namedMesh = o.children.filter(c => c.isMesh && c.name);
+    const leaf = o.isMesh || (grpKids.length === 0 && namedMesh.length <= 1);
+    if (leaf) { cb(o, depth); return; }
+    grpKids.concat(namedMesh).forEach(c => walk(c, depth + 1));
+  })(model, 0);
 }
 
 function treeRender(){
@@ -2361,18 +2624,14 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     cubeHit, cubeDraw, cubeMesh, cubeScene, cubeCam, mPick,
     draw, kindOf, drawGltf, finishModel,   /* ★GLB の往復を測るため */
     /** 試すモデルを入れる（STEP の代わり）*/
+    /* 🔴 **後始末を写さない。`finishModel` をそのまま呼ぶ。**
+       ⚠️ ここに本番の後始末を写していたので、**片方だけ直す事故**が起きた
+          （突き合わせの消去を `finishModel` に足したのにここに無く、
+            動作確認が「消えない」と出た）。動作確認の口が本番と違う道を
+          通っていたら、確認した意味が無い。 */
     setModel(g) {
-      if (model) scene.remove(model);
-      scene.add(g); model = g; fit();
-      document.getElementById('fit').disabled = false;
-      document.getElementById('bar').style.display = 'flex';
-      document.getElementById('shot').style.display = '';
-      document.getElementById('bgw').style.display = '';
+      finishModel(g, performance.now(), 0);
       document.getElementById('ph').style.display = 'none';   /* 案内を隠す */
-      secOn = false; secFlip = false; secPosVal = 500;
-      navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
-  toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
-      secBuild(); secSync(); secApply();
     },
     setSec(on, axis, pos, flip) {
       secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;

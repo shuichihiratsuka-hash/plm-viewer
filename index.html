@@ -65,6 +65,20 @@ main{flex:1;position:relative;min-height:14rem}
 #ph.on{background:rgba(14,165,233,.10);outline:2px dashed var(--accent);outline-offset:-8px}
 #ph b{font-size:15px}
 #ph span{color:var(--ink3);font-size:12px;max-width:22rem}
+/* 切り出しの一覧。★ログに埋もれさせない（既定 3 行の中では見えない）*/
+#ph .cutl{pointer-events:auto;max-height:62vh;overflow:auto;width:min(94vw,44rem);
+  margin-top:.4rem;border:1px solid #23324f;border-radius:8px;
+  background:rgba(8,13,24,.92);text-align:left;}
+#ph .cutr{display:flex;align-items:center;gap:8px;padding:6px 9px;
+  border-bottom:1px solid #16203a;font-size:12px;}
+#ph .cutr:last-child{border-bottom:none;}
+#ph .cutr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:#dbe6fb;}
+#ph .cutr .sz{font-family:var(--mono);color:#9fb0cd;flex:none;font-size:11px;}
+#ph .cutr .sz.big{color:#e3b341;}
+#ph .cutr button{min-height:30px;padding:3px 10px;font-size:12px;flex:none;}
+#ph .cuth{padding:6px 9px;font-size:11px;color:#8fa2c6;
+  border-bottom:1px solid #23324f;background:rgba(20,30,50,.7);}
 /* ══ 下のログ欄 ══════════════════════════════════════════════════
    ★既定は**3行ぶん**。⚠️ 以前は `max-height:42vh` で、ログが増えると
      **絵の面積を食っていた**（実機で画面の半分近くを占めていた）。
@@ -96,7 +110,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824x</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824y</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -370,6 +384,14 @@ function log(t, cls){
 
 /* ★案内の中の「別のファイルを選ぶ」を受ける */
 document.getElementById('ph').addEventListener('click', ev => {
+  /* ★一覧の「切り出して開く」*/
+  const cb = ev.target.closest ? ev.target.closest('[data-cut]') : null;
+  if (cb && szLast) {
+    const t = scanTops[Number(cb.getAttribute('data-i'))];
+    document.querySelectorAll('#ph [data-cut]').forEach(x => { x.disabled = true; });
+    exRun(szLast, Number(cb.getAttribute('data-cut')), t ? t.name : '切り出し');
+    return;
+  }
   const id = ev.target && ev.target.id;
   if (id === 'phback') {
     phReset();
@@ -4189,6 +4211,8 @@ async function scanStep(file, opt){
 
 /** ★調べるのをやめる旗（2GB は分の単位でかかるので、途中で降りられるように）*/
 let scanStop = false;
+/** ★調べた結果のサブ組立の一覧（画面の真ん中に出すため）*/
+let scanTops = [];
 /** ★同じファイルの索引は持ち回す（2回目以降の切り出しが速い）*/
 let exCache = null;      /* { file, r } */
 
@@ -4463,6 +4487,7 @@ async function scanShow(file){
 
   /* ── 組立の木（★深さ2まで。全部出すとログが埋まる）── */
   const tops = [];
+  scanTops = tops;                      /* ★画面の真ん中の一覧で使う */
   log('── 組立の木 ──');
   r.roots.forEach(root => {
     const rr = r.subtree(root);
@@ -4478,7 +4503,8 @@ async function scanShow(file){
     rows.slice(0, 40).forEach(q => {
       const share = rr.items ? Math.round(q.s.items / rr.items * 100) : 0;
       const est = r.bytes * (rr.items ? q.s.items / rr.items : 0);
-      tops.push({ name: r.nameOf(q.pd), items: q.s.items, est: est });
+      tops.push({ name: r.nameOf(q.pd), items: q.s.items, est: est,
+                  pd: q.pd, leaf: q.s.leaf });
       /* ★押すと**そのサブ組立だけ切り出して開く**（本人の要望）。
          ⚠️ 押せることが分かるようにボタンで出す。 */
       const cut = '<button data-cut="' + q.pd + '" data-nm="' +
@@ -4509,16 +4535,30 @@ async function scanShow(file){
       '2回目以降は索引を使い回すので速くなります。');
   log('　⚠️ 切り出しは**色と組立の入れ子は残し、分類と層は捨てます**（見るのに要らないため）。');
 
+  /* 🔴 **一覧は画面の真ん中に出す。**
+     ⚠️ ログ欄は既定 3 行なので、そこに出したボタンは**上へスクロールして隠れる**
+        （本人の報告「切り出して開くボタンがないよ」の正体）。 */
+  scanTops.sort((a, b) => b.est - a.est);
+  const rowsHtml = scanTops.map((t, i) => {
+    const big = t.est > SZ_STOP;
+    return '<div class="cutr">' +
+      '<span class="nm" title="' + esc(t.name) + '">' + esc(t.name) + '</span>' +
+      '<span class="sz' + (big ? ' big' : '') + '">部品 ' +
+        t.leaf.toLocaleString() + '　' + mb(t.est) + '</span>' +
+      '<button data-cut="' + t.pd + '" data-i="' + i + '">切り出して開く</button>' +
+      '</div>';
+  }).join('');
   phSay('<b>調べ終わりました</b><span>' +
-    '実体 ' + r.total.toLocaleString() + ' 個／品目 ' + r.products.toLocaleString() + ' 件<br>' +
+    '実体 ' + r.total.toLocaleString() + ' 個／品目 ' + r.products.toLocaleString() + ' 件。' +
     (fit.length
-      ? '★<b>そのまま開けそうなサブ組立が ' + fit.length + ' 件</b>あります。<br>' +
-        '下のログの「<b>切り出して開く</b>」を押すと、' +
-        'そのサブ組立だけを切り出して開きます。'
-      : '⚠️ どのサブ組立も大きいままです。<br>' +
-        'それでも「切り出して開く」で小さくできます（下のログ）。') +
-    '<br><br>詳しい内訳は下のログに出しています。' +
-    '</span><button id="phback">別のファイルを選ぶ</button>');
+      ? '★<b>そのまま開けそうなサブ組立が ' + fit.length + ' 件</b>あります。'
+      : '⚠️ どのサブ組立も大きいままですが、切り出せば小さくできます。') +
+    '</span>' +
+    '<div class="cutl"><div class="cuth">' +
+      'サブ組立を選んで「切り出して開く」（大きい順。' +
+      '<span style="color:#e3b341">黄色</span>は ' + mb(SZ_STOP) + ' 超）' +
+      '</div>' + rowsHtml + '</div>' +
+    '<button id="phback">別のファイルを選ぶ</button>');
 }
 
 /* ══════════════════════════════════════════════════════════════════════

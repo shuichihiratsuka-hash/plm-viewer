@@ -126,7 +126,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825b</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825d</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -142,6 +142,15 @@ a{color:var(--accent-hi)}
   <!-- ★手順書に貼るとき用。**既定は暗い色**、押すと純白 -->
   <label id="bgw" style="display:none" title="手順書などに貼るときは白が使いやすいです">
     <input type="checkbox" id="bgwc"> 白背景</label>
+  <!-- ★三角形の細かさ。★次に開くときに効く（粗いほど速い）-->
+  <label id="lvw" title="粗いほど速く、三角形も減ります。検図で寸法を見るときは細かく">
+    細かさ
+    <select id="lvsel">
+      <option value="auto">自動（大きさで決める）</option>
+      <option value="fast">速い（粗い）</option>
+      <option value="normal">ふつう</option>
+      <option value="fine">細かい（遅い）</option>
+    </select></label>
   <!-- ★切り出しの一覧へ戻る。★調べ直さずに次を試せるように（本人の要望）-->
   <button id="cutback" style="display:none"
     title="調べた結果の一覧に戻ります（調べ直しません）">切り出し一覧</button>
@@ -255,6 +264,11 @@ a{color:var(--accent-hi)}
 #bgw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
   padding:0 6px;cursor:pointer;white-space:nowrap;}
 #bgw input{margin:0;cursor:pointer;}
+/* 三角形の細かさ。★ヘッダのボタンと高さを揃える */
+#lvw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
+  padding:0 6px;white-space:nowrap;}
+#lvw select{font-family:var(--font);font-size:12px;padding:3px 5px;border-radius:6px;
+  background:var(--raise);color:var(--ink2);border:1px solid var(--line);}
 /* 計測のバルーン。★絵の上に浮かせる。**バルーンだけ**当たりを取る（掴めるように）*/
 #mlab{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;}
 #mlab svg{position:absolute;inset:0;pointer-events:none;overflow:visible;}
@@ -444,6 +458,14 @@ document.getElementById('ph').addEventListener('click', ev => {
     ev.target.disabled = true;
     ev.target.textContent = '中止しています…';
   }
+});
+
+/* ★ログの中の「変換を中止する」を受ける（別スレッドを止める）*/
+logEl.addEventListener('click', ev => {
+  const b = ev.target.closest ? ev.target.closest('#cvstop') : null;
+  if (!b) return;
+  b.disabled = true;
+  if (occtAbort()) log('（中止を送りました）');
 });
 
 /* ★ログの中の「それでも試す」を受ける。
@@ -695,6 +717,114 @@ function loadOcct(){
   return occtP;
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   変換を別スレッド（Web Worker）でやる
+   ══════════════════════════════════════════════════════════════════
+   🔴 `occt.ReadStepFile` は**同期**で main thread を丸ごと止める。だから
+      「進んでいるのか止まっているのか分からない・中止できない・時間も出ない」。
+      ⇒ 21.4MB が「重いだけ」か「無限に回っている」かの**切り分けができなかった**
+        （2026-08-24、実機で無反応になった）。
+   ★別スレッドにすれば：**経過秒数が出る／中止できる／画面が生きている**。
+   ⚠️ Worker は **Blob から作る**（別ファイルを置かない。1枚の HTML を崩さない）。
+   ⚠️ CDN を `importScripts` する（jsDelivr は CORS を許すので通る）。
+      通らない環境では**元の同期のやり方に落ちる**（行き止まりを作らない）。
+   ══════════════════════════════════════════════════════════════════ */
+const OCCT_WORKER_SRC = `
+self.onmessage = function (ev) {
+  var d = ev.data;
+  try { importScripts(d.base + 'occt-import-js.js'); }
+  catch (e) { self.postMessage({ err: 'CDN を読めません: ' + (e && e.message || e) }); return; }
+  occtimportjs({ locateFile: function (n) { return d.base + n; } }).then(function (occt) {
+    self.postMessage({ stage: 'wasm' });
+    var r;
+    try {
+      r = (d.kind === 'iges') ? occt.ReadIgesFile(d.buf, d.params)
+                              : occt.ReadStepFile(d.buf, d.params);
+    } catch (e) { self.postMessage({ err: String(e && e.message || e) }); return; }
+    self.postMessage({ result: r });
+  }).catch(function (e) { self.postMessage({ err: String(e && e.message || e) }); });
+};`;
+
+let occtWorker = null, occtWorkerBad = false;
+/**
+ * 三角形の細かさ（3段）。
+ * 🔴 **粗いほど速い。** 実機で 21.4MB・8,646部品が**既定のままで 338 秒**かかった
+ *    （三角形 300万）。見るには過剰なので、大きいものは粗くする。
+ * ★名前は README で確認したもの：`linearDeflectionType` は
+ *   `bounding_box_ratio`（外形に対する比）／`absolute_value`。
+ * ⚠️ 「細かい」は**検図で寸法を見るとき**に使う（小さい部品向け）。
+ */
+const OCCT_LV = {
+  fast:   { nm: '速い（粗い）',   linearDeflection: 0.006,  angularDeflection: 1.2 },
+  normal: { nm: 'ふつう',         linearDeflection: 0.002,  angularDeflection: 0.6 },
+  fine:   { nm: '細かい（遅い）', linearDeflection: 0.0005, angularDeflection: 0.3 }
+};
+let occtLv = 'auto';                  /* auto / fast / normal / fine */
+
+/** ファイルの大きさから段を決める（`auto` のとき）*/
+function occtLvFor(bytes){
+  if (occtLv !== 'auto') return occtLv;
+  if (bytes > 8 * 1048576) return 'fast';
+  if (bytes > 1.5 * 1048576) return 'normal';
+  return 'fine';
+}
+/** 実際に渡す設定を作る */
+function occtParamsFor(bytes){
+  const k = occtLvFor(bytes), v = OCCT_LV[k];
+  return { key: k, nm: v.nm,
+           p: { linearUnit: 'millimeter', linearDeflectionType: 'bounding_box_ratio',
+                linearDeflection: v.linearDeflection,
+                angularDeflection: v.angularDeflection } };
+}
+
+/**
+ * 別スレッドで変換する。
+ * @returns {Promise<object>} occt の結果
+ * ⚠️ 失敗（Worker が作れない・CDN に出られない）なら `null` を返す。
+ *    呼び側が**元の同期のやり方に落ちる**。
+ */
+function occtInWorker(buf, kind, onTick, prm){
+  if (occtWorkerBad || typeof Worker === 'undefined' || typeof Blob === 'undefined')
+    return Promise.resolve(null);
+  return new Promise(res => {
+    let w;
+    try {
+      w = new Worker(URL.createObjectURL(
+        new Blob([OCCT_WORKER_SRC], { type: 'application/javascript' })));
+    } catch (e) { occtWorkerBad = true; res(null); return; }
+    occtWorker = w;
+    const t0 = performance.now();
+    /* ★経過を出す（これが「止まっているのか」の答えになる）*/
+    const tick = setInterval(() => {
+      onTick(Math.round((performance.now() - t0) / 1000));
+    }, 1000);
+    function done(v){ clearInterval(tick); try { w.terminate(); } catch (e) {}
+      occtWorker = null; res(v); }
+    w.onmessage = ev => {
+      const d = ev.data || {};
+      if (d.stage === 'wasm') { log('　（別スレッドで WASM を読み終えました）'); return; }
+      if (d.err) { log('⚠️ 別スレッドで失敗：' + d.err + '　★元のやり方で試します', 'wa');
+                   occtWorkerBad = true; done(null); return; }
+      done(d.result || null);
+    };
+    w.onerror = e => {
+      log('⚠️ 別スレッドを使えません（' + (e && e.message || '理由不明') +
+          '）。★元のやり方で試します', 'wa');
+      occtWorkerBad = true; done(null);
+    };
+    /* ⚠️ `buf` は写して渡す（元をこちらでも使うので transfer しない）*/
+    w.postMessage({ base: OCCT, kind: kind, buf: buf, params: prm });
+  });
+}
+
+/** ★変換を中止する（別スレッドを止める）*/
+function occtAbort(){
+  if (!occtWorker) return false;
+  try { occtWorker.terminate(); } catch (e) {}
+  occtWorker = null;
+  return true;
+}
+
 /* ── 読み込み ─────────────────────────────────────────────── */
 let busy = false;
 /**
@@ -714,10 +844,37 @@ async function draw(buf, kind, tAll){
     return;
   }
   const occt = await loadOcct();
-  log('変換中…（大きいファイルはここで画面が止まります）');
-  await new Promise(r => setTimeout(r, 40));      /* 上の行を描かせてから重い処理へ */
   const t1 = performance.now();
-  const result = (kind === 'iges') ? occt.ReadIgesFile(buf, null) : occt.ReadStepFile(buf, null);
+  let result = null;
+  /* ★まず別スレッドで（止まらない・経過が出る・中止できる）*/
+  /* ★粗さを決めて**画面に出す**（黙って粗くしない）*/
+  const lv = occtParamsFor(buf.length);
+  log('変換の細かさ：<b>' + lv.nm + '</b>' +
+      (occtLv === 'auto' ? '（大きさから自動。上の「細かさ」で変えられます）' : '') +
+      '　★粗いほど速く、三角形も減ります');
+  log('変換中…　<button id="cvstop">中止する</button>');
+  let lastTick = 0;
+  result = await occtInWorker(buf, kind, sec2 => {
+    if (sec2 === lastTick) return;
+    lastTick = sec2;
+    /* ★同じ行を書き換える（何十行も積まない）*/
+    lines[lines.length - 1] = '変換中… ' + sec2 + ' 秒' +
+      '　<button id="cvstop">中止する</button>';
+    logEl.innerHTML = lines.join('\n');
+    logEl.scrollTop = 1e6;
+  }, lv.p);
+  if (result === null && !occtWorkerBad) {
+    /* ★中止された */
+    log('■ 変換を中止しました', 'wa');
+    return;
+  }
+  if (result === null) {
+    /* ⚠️ 別スレッドが使えない環境 → 元の同期のやり方に落ちる（画面は止まる）*/
+    log('変換中…（この環境では画面が止まります。しばらくお待ちください）');
+    await new Promise(r => setTimeout(r, 40));
+    result = (kind === 'iges') ? occt.ReadIgesFile(buf, lv.p)
+                               : occt.ReadStepFile(buf, lv.p);
+  }
   const tConv = performance.now() - t1;
   if (!result || !result.success) { log('✗ 変換に失敗しました（STEP として読めない）', 'ng'); return; }
   log('✓ 変換完了　' + sec(tConv) + '　メッシュ ' + result.meshes.length + ' 個', 'ok');
@@ -770,7 +927,26 @@ function finishModel(g, tAll, tri){
   secOn = false; secFlip = false; secPosVal = 500;
   secBuild(); secSync(); secApply();
   log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');
-  if (tri > 2000000) log('⚠️ 三角形が200万超。スマホでは重いはずです', 'wa');
+  /* 🔴 **時間がかかったら、次からの手を必ず出す。**
+     ⚠️ 実機で 21.4MB・8,646部品が **338 秒**かかった。
+        ★その時間の主は**部品ごとの処理**なので、三角形を粗くしても劇的には減らない。
+        ⇒ **一度 GLB にすれば、次からは1秒で開く。** これが唯一の効く手。
+     ★黙っていると毎回 338 秒待つことになる。**必ず言う。** */
+  const took = (performance.now() - tAll) / 1000;
+  if (took > 45) {
+    log('🔴 <b>変換に ' + Math.round(took) + ' 秒かかりました。' +
+        '次からは GLB で開いてください。</b>', 'ng');
+    log('　★いま「表示」→「<b>GLB で書き出す</b>」を押して保存しておけば、' +
+        '**次からは1秒ほどで開きます**（変換が要らないので）。');
+    log('　⚠️ 時間の主は**部品ごとの処理**（' +
+        (model ? countNodes(model).toLocaleString() : '?') +
+        ' 節点）なので、三角形を粗くしても劇的には減りません。' +
+        '**GLB にするのが効きます。**');
+    log('　⚠️ GLB は**写し**です。STEP を改訂したら作り直してください。');
+  }
+  if (tri > 2000000)
+    log('⚠️ 三角形が200万超。スマホでは重いはずです。' +
+        '★上の「細かさ」を**速い（粗い）**にして開き直すと軽く・速くなります', 'wa');
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -807,6 +983,14 @@ function bgSet(white){
 document.getElementById('bgwc').addEventListener('change', function(){
   bgSet(this.checked);
 });
+/* ★三角形の細かさ。★次に開くときに効く */
+document.getElementById('lvsel').addEventListener('change', function(){
+  occtLv = this.value;
+  log('変換の細かさを「' +
+      (occtLv === 'auto' ? '自動' : OCCT_LV[occtLv].nm) +
+      '」にしました（★次に開くときに効きます）');
+});
+
 /* ★「切り出し一覧」＝調べ直さずに一覧へ戻る（索引も持ち回している）*/
 document.getElementById('cutback').addEventListener('click', () => {
   if (scanRes) cutRender();
@@ -5244,6 +5428,8 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
     renderer,
     scanStep, scanShow, partAxis, cubeSpin, faceFit, mPickFace, mItems: () => mItems,
+    occtInWorker, occtAbort, occtParamsFor, OCCT_LV,
+    get occtLv(){ return occtLv; }, set occtLv(v){ occtLv = v; },
     exClosure, exWrite, exRun, cutRender,
     get cutPath(){ return cutPath; }, set cutPath(v){ cutPath = v; },
     /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。

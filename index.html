@@ -62,15 +62,15 @@
   *{scrollbar-width:thin;scrollbar-color:#26314e transparent;}
 }
 html,body{margin:0;height:100%;overscroll-behavior:none}
-body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;
   line-height:1.75;display:flex;flex-direction:column}
 header{padding:calc(.6rem + env(safe-area-inset-top)) .8rem .6rem;background:var(--card);
   border-bottom:1px solid var(--line);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-h1{margin:0;font-size:15px;font-weight:700;white-space:nowrap}
-.tag{font-family:var(--mono);font-size:10px;color:var(--ink3);border:1px solid var(--line);
+h1{margin:0;font-size:16px;font-weight:700;white-space:nowrap}
+.tag{font-family:var(--mono);font-size:11.5px;color:var(--ink3);border:1px solid var(--line);
   border-radius:999px;padding:.1em .6em}
 .sp{flex:1}
-button{font-family:var(--font);font-size:14px;border-radius:9px;cursor:pointer;
+button{font-family:var(--font);font-size:15px;border-radius:9px;cursor:pointer;
   border:1px solid var(--line);background:var(--raise);color:var(--ink2);
   min-height:44px;padding:0 1rem}
 button:active{transform:translateY(1px)}
@@ -87,21 +87,25 @@ main{flex:1;position:relative;min-height:14rem}
   justify-content:center;gap:.5rem;text-align:center;padding:1.5rem;pointer-events:none}
 #ph button,#ph a{pointer-events:auto}
 #ph.on{background:rgba(14,165,233,.10);outline:2px dashed var(--accent);outline-offset:-8px}
-#ph b{font-size:15px}
-#ph span{color:var(--ink3);font-size:12px;max-width:22rem}
+#ph b{font-size:16px}
+#ph span{color:var(--ink3);font-size:13.5px;max-width:22rem}
 /* 切り出しの一覧。★ログに埋もれさせない（既定 3 行の中では見えない）*/
 #ph .cutl{pointer-events:auto;max-height:62vh;overflow:auto;width:min(94vw,44rem);
   margin-top:.4rem;border:1px solid #23324f;border-radius:8px;
   background:rgba(8,13,24,.92);text-align:left;}
 #ph .cutr{display:flex;align-items:center;gap:8px;padding:6px 9px;
-  border-bottom:1px solid #16203a;font-size:12px;}
+  border-bottom:1px solid #16203a;font-size:13.5px;}
 #ph .cutr:last-child{border-bottom:none;}
 #ph .cutr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:#dbe6fb;}
-#ph .cutr .sz{font-family:var(--mono);color:#9fb0cd;flex:none;font-size:11px;}
+#ph .cutr .sz{font-family:var(--mono);color:#9fb0cd;flex:none;font-size:13px;}
+#ph .cutr .sz2{font-family:var(--mono);color:#6f80a3;flex:none;font-size:13px;
+  min-width:5.5em;text-align:right;}
+#ph .cutr .sz2.mid{color:#e3b341;}
+#ph .cutr .sz2.big{color:#f85149;}
 #ph .cutr .sz.big{color:#e3b341;}
-#ph .cutr button{min-height:30px;padding:3px 10px;font-size:12px;flex:none;}
-#ph .cuth{padding:6px 9px;font-size:11px;color:#8fa2c6;
+#ph .cutr button{min-height:30px;padding:3px 10px;font-size:13.5px;flex:none;}
+#ph .cuth{padding:6px 9px;font-size:13px;color:#8fa2c6;
   border-bottom:1px solid #23324f;background:rgba(20,30,50,.7);}
 #ph .cutr .sz{color:#3fb950;}
 #ph .cutr .sz.mid{color:#e3b341;}
@@ -110,10 +114,10 @@ main{flex:1;position:relative;min-height:14rem}
 #ph .cutr .nm.dn{cursor:pointer;text-decoration:underline dotted;
   text-underline-offset:3px;pointer-events:auto;}
 #ph .cutr .nm.dn:hover{color:#fff;}
-#ph .cutr .nm.dn b{color:#8fa2c6;font-size:11px;}
+#ph .cutr .nm.dn b{color:#8fa2c6;font-size:13px;}
 /* ★パン屑 */
 #ph .cutb{pointer-events:auto;width:min(94vw,44rem);text-align:left;
-  font-size:11px;color:#8fa2c6;margin-top:.5rem;
+  font-size:13px;color:#8fa2c6;margin-top:.5rem;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #ph .cutb .cb{cursor:pointer;color:#9fc2f0;text-decoration:underline dotted;
   text-underline-offset:3px;}
@@ -135,7 +139,7 @@ footer{--fh:56px;background:var(--card);border-top:1px solid var(--line);
 #fgrip:hover::after{background:#3f5a8c;}
 footer .hd{display:flex;align-items:center;gap:8px;padding:2px 0 0;flex:none;}
 footer .hd .sp{flex:1;}
-footer .hd button{padding:1px 8px;font-size:11px;}
+footer .hd button{padding:1px 8px;font-size:13px;}
 /* ログ本体だけがスクロールする。★高さは変数で持つ（1か所で決める）*/
 #log{height:var(--fh);overflow:auto;flex:none;}
 /* ★地が濃い所はつまみを少し明るくする（同じ色だと見えない）*/
@@ -151,17 +155,17 @@ footer .hd button{padding:1px 8px;font-size:11px;}
 #bom textarea::-webkit-scrollbar-thumb:hover{background:#44598c;background-clip:content-box;}
 footer.fold #log{display:none;}
 footer.fold{--fh:0px;}
-.hd{font-size:12px;color:var(--ink2)}
-#log{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;margin:.3rem 0 0;
+.hd{font-size:13.5px;color:var(--ink2)}
+#log{font-family:var(--mono);font-size:13px;white-space:pre-wrap;margin:.3rem 0 0;
   color:var(--ink2)}
 .ok{color:var(--ok)} .ng{color:var(--ng)} .wa{color:var(--wa)}
 .lic{margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--line);
-  font-size:10.5px;color:var(--ink3);line-height:1.7}
+  font-size:12px;color:var(--ink3);line-height:1.7}
 a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825e</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825j</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -178,13 +182,13 @@ a{color:var(--accent-hi)}
   <label id="bgw" style="display:none" title="手順書などに貼るときは白が使いやすいです">
     <input type="checkbox" id="bgwc"> 白背景</label>
   <!-- ★三角形の細かさ。★次に開くときに効く（粗いほど速い）-->
-  <label id="lvw" title="粗いほど速く、三角形も減ります。検図で寸法を見るときは細かく">
+  <label id="lvw" title="⚠️ 細かさで変換は速くなりません（実測：既定 338秒→粗い 512秒）。効くのは三角形の数＝描画の軽さと GLB の大きさです。時間を決めるのは部品の数">
     細かさ
     <select id="lvsel">
-      <option value="auto">自動（大きさで決める）</option>
-      <option value="fast">速い（粗い）</option>
-      <option value="normal">ふつう</option>
-      <option value="fine">細かい（遅い）</option>
+      <option value="auto" title="ファイルの大きさで決めます">自動</option>
+      <option value="fast" title="三角形が少ない（描画が軽い）">粗い</option>
+      <option value="normal" title="occt の既定と同じ">ふつう</option>
+      <option value="fine" title="三角形が多い（検図向け）">細かい</option>
     </select></label>
   <!-- ★切り出しの一覧へ戻る。★調べ直さずに次を試せるように（本人の要望）-->
   <button id="cutback" style="display:none"
@@ -214,8 +218,8 @@ a{color:var(--accent-hi)}
 #nav button{display:flex;flex-direction:column;align-items:center;gap:2px;
   min-width:62px;padding:6px 8px;background:none;border:1px solid transparent;
   border-radius:8px;color:#a9bad8;font:inherit;cursor:pointer;}
-#nav button i{font-style:normal;font-size:17px;line-height:1;}
-#nav button span{font-size:11px;white-space:nowrap;}
+#nav button i{font-style:normal;font-size:19px;line-height:1;}
+#nav button span{font-size:13px;white-space:nowrap;}
 #nav button:hover{background:#16203a;color:#dce6f8;}
 /* ★選んでいる道具は青く塗る（いまどのモードか分からないと迷う）*/
 #nav button.on{background:#1d4ed8;border-color:#2f6fe0;color:#fff;}
@@ -231,10 +235,10 @@ a{color:var(--accent-hi)}
    ⚠️ 以前はどちらも暗い地に薄い字で、**押せるものがどれか分からなかった**
       （本人の指摘：「メニューに名前と、押すボタンが色味が同じでよくわからん」）。
    ⇒ 見出しは**小さく・彩度を落とし・枠なし**、ボタンは**明るい地＋はっきりした枠**。 */
-#opt .lb{font-size:11px;color:#66789a;letter-spacing:.03em;padding:0 1px;
+#opt .lb{font-size:13px;color:#66789a;letter-spacing:.03em;padding:0 1px;
   white-space:nowrap;}
 #opt .sep{width:1px;height:18px;background:#2a3a5c;margin:0 4px;}
-#opt button{padding:5px 11px;font-size:12px;min-height:32px;
+#opt button{padding:5px 11px;font-size:13.5px;min-height:32px;
   background:#1e2b47;border-color:#37496f;color:#dce7fb;}
 #opt button:hover{background:#27375c;border-color:#4a5f8c;}
 #opt button.on{background:#1d4ed8;border-color:#4b7bff;color:#fff;font-weight:700;}
@@ -254,37 +258,37 @@ a{color:var(--accent-hi)}
   display:none;flex-direction:column;background:rgba(8,13,24,.92);
   border:1px solid #1e2a44;border-radius:8px;overflow:hidden;}
 #tree .th{display:flex;align-items:center;gap:6px;padding:7px 9px;
-  border-bottom:1px solid #1e2a44;font-size:12px;color:#c9d6ee;}
-#tree .th b{font-size:12px;}
+  border-bottom:1px solid #1e2a44;font-size:13.5px;color:#c9d6ee;}
+#tree .th b{font-size:13.5px;}
 #tree .th .sp{flex:1;}
 #tree .tl{flex:1;overflow:auto;padding:4px 0;}
-#tree .tr{display:flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;
+#tree .tr{display:flex;align-items:center;gap:4px;padding:3px 8px;font-size:13.5px;
   color:#c9d6ee;cursor:pointer;white-space:nowrap;}
 #tree .tr:hover{background:#16203a;}
 #tree .tr.dim{color:#5f6f8f;}
 #tree .tw{width:14px;text-align:center;color:#7f92b5;flex:none;}
 #tree .te{width:14px;text-align:center;color:#7f92b5;flex:none;}
 #tree .tn{overflow:hidden;text-overflow:ellipsis;}
-#tree .tc{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
+#tree .tc{margin-left:auto;color:#6f80a3;font-size:13px;flex:none;}
 #treebtn{display:none;}
 /* E-BOM 突き合わせ。★ツリーの反対側（右）に出す。両方開けるようにする */
 #bom{position:absolute;right:10px;top:10px;bottom:10px;width:330px;z-index:5;
   display:none;flex-direction:column;background:rgba(8,13,24,.92);
   border:1px solid #1e2a44;border-radius:8px;overflow:hidden;}
 #bom .th{display:flex;align-items:center;gap:6px;padding:7px 9px;
-  border-bottom:1px solid #1e2a44;font-size:12px;color:#c9d6ee;}
-#bom .th b{font-size:12px;} #bom .th .sp{flex:1;}
+  border-bottom:1px solid #1e2a44;font-size:13.5px;color:#c9d6ee;}
+#bom .th b{font-size:13.5px;} #bom .th .sp{flex:1;}
 #bom .bi{padding:7px 9px;border-bottom:1px solid #1e2a44;}
 #bom textarea{width:100%;height:96px;box-sizing:border-box;resize:vertical;
   background:#0b1220;color:#dbe6fb;border:1px solid #23324f;border-radius:5px;
   padding:6px 7px;font:12px/1.5 var(--mono);}
 #bom .bb{display:flex;gap:5px;margin-top:6px;}
-#bom .bn{font-size:11px;color:#7f8fb0;margin-top:5px;line-height:1.5;}
+#bom .bn{font-size:13px;color:#7f8fb0;margin-top:5px;line-height:1.5;}
 #bom .bl{flex:1;overflow:auto;padding:4px 0;}
-#bom .bg{padding:5px 9px 3px;font-size:11px;color:#8fa2c6;
+#bom .bg{padding:5px 9px 3px;font-size:13px;color:#8fa2c6;
   border-top:1px solid #16203a;margin-top:4px;}
 #bom .bg:first-child{border-top:none;margin-top:0;}
-#bom .br{display:flex;align-items:center;gap:5px;padding:3px 9px;font-size:12px;
+#bom .br{display:flex;align-items:center;gap:5px;padding:3px 9px;font-size:13.5px;
   color:#c9d6ee;cursor:pointer;white-space:nowrap;}
 #bom .br:hover{background:#16203a;}
 #bom .br.sel{background:#1b2b4d;}
@@ -292,23 +296,23 @@ a{color:var(--accent-hi)}
 #bom .br.ok .bk{color:#3fb950;} #bom .br.mo .bk{color:#e3b341;}
 #bom .br.eo .bk{color:#f85149;}
 #bom .bt{overflow:hidden;text-overflow:ellipsis;}
-#bom .bq{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
+#bom .bq{margin-left:auto;color:#6f80a3;font-size:13px;flex:none;}
 #bom .bq.ng{color:#e3b341;}
-#bom .bw{padding:8px 9px;font-size:11px;color:#8fa2c6;line-height:1.6;}
+#bom .bw{padding:8px 9px;font-size:13px;color:#8fa2c6;line-height:1.6;}
 /* 白背景のチェックボックス。★ヘッダのボタンと高さを揃える */
-#bgw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
+#bgw{display:inline-flex;align-items:center;gap:5px;font-size:13.5px;color:var(--ink2);
   padding:0 6px;cursor:pointer;white-space:nowrap;}
 #bgw input{margin:0;cursor:pointer;}
 /* 三角形の細かさ。★ヘッダのボタンと高さを揃える */
-#lvw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
+#lvw{display:inline-flex;align-items:center;gap:5px;font-size:13.5px;color:var(--ink2);
   padding:0 6px;white-space:nowrap;}
-#lvw select{font-family:var(--font);font-size:12px;padding:3px 5px;border-radius:6px;
+#lvw select{font-family:var(--font);font-size:13.5px;padding:3px 5px;border-radius:6px;
   background:var(--raise);color:var(--ink2);border:1px solid var(--line);}
 /* 計測のバルーン。★絵の上に浮かせる。**バルーンだけ**当たりを取る（掴めるように）*/
 #mlab{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;}
 #mlab svg{position:absolute;inset:0;pointer-events:none;overflow:visible;}
 #mlab .ml{position:absolute;transform:translate(-50%,-50%);
-  padding:3px 8px;border-radius:10px;font-size:12px;white-space:nowrap;
+  padding:3px 8px;border-radius:10px;font-size:13.5px;white-space:nowrap;
   /* 🔴 **数値は等幅**（共通ルール。`0` に点が入って 8 と見間違えない）*/
   font-family:var(--mono);font-variant-numeric:tabular-nums;
   background:#1d4ed8;color:#fff;box-shadow:0 1px 5px rgba(0,0,0,.45);
@@ -318,14 +322,14 @@ a{color:var(--accent-hi)}
 #mlab .ml.pos{background:#0f766e;}
 #mlab .ml.drag{box-shadow:0 3px 12px rgba(0,0,0,.6);}
 /* ★吸い付く先の名前。カーソルの横に小さく出す（当たりは取らない）*/
-#snaptag{position:absolute;pointer-events:none;font-family:var(--mono);font-size:11px;
+#snaptag{position:absolute;pointer-events:none;font-family:var(--mono);font-size:13px;
   padding:1px 5px;border-radius:6px;white-space:nowrap;
   background:rgba(8,13,24,.85);border:1px solid #35507e;color:#dbe6fb;}
 #snaptag.cor{border-color:#ffd23f;color:#ffe79a;}
 #snaptag.edg{border-color:#35d7f5;color:#bdf0fb;}
 /* ★途中の値（まだ確定していない）。★確定した青いバルーンと見分ける */
 #mlive{position:absolute;pointer-events:none;transform:translate(-50%,-50%);
-  font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;
+  font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13.5px;
   padding:2px 7px;border-radius:9px;white-space:nowrap;
   background:rgba(8,20,34,.9);border:1px dashed #9fe4ff;color:#d7f3ff;}
 </style>
@@ -388,8 +392,10 @@ a{color:var(--accent-hi)}
   </div>
   <div id="ph"><b>ファイルを選んでください</b>
     <span><code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code> が読めます。<br>
-      ★<b>大きい組立は GLB にしてから</b>お持ちください（STEP は 800MB あたりが限界です）。<br>
-      iPhone は「ファイル」アプリから選びます（Drive・OneDrive どちらでも）。<br>
+      🔴 <b>STEP は「部品の数」で時間が決まります</b>（実測：8,646 部品で約6分）。<br>
+      ★大きい STEP は、選んだあとに出る<b>「中身を調べる」</b>から
+      <b>サブ組立を切り出して</b>ください（部品 1,500 くらいまでが実用）。<br>
+      ★<b>一度開いたら「表示 → GLB で書き出す」</b>。次からは1秒で開きます。<br>
       ファイルはこの端末から出ません（このページはサーバに何も送りません）</span></div>
 </main>
 <footer>
@@ -783,25 +789,40 @@ self.onmessage = function (ev) {
 let occtWorker = null, occtWorkerBad = false;
 /**
  * 三角形の細かさ（3段）。
- * 🔴 **粗いほど速い。** 実機で 21.4MB・8,646部品が**既定のままで 338 秒**かかった
- *    （三角形 300万）。見るには過剰なので、大きいものは粗くする。
- * ★名前は README で確認したもの：`linearDeflectionType` は
- *   `bounding_box_ratio`（外形に対する比）／`absolute_value`。
- * ⚠️ 「細かい」は**検図で寸法を見るとき**に使う（小さい部品向け）。
+ *
+ * 🔴 **「粗いほど速い」は間違いだった。** 同じファイル（21.4MB・8,646 部品）で実測：
+ *      既定（0.001 / 0.5）　… **338.1 秒**・三角形 **3,006,626**
+ *      粗い（0.006 / 1.2）　… **511.7 秒**・三角形 **1,007,134**
+ *    ⇒ 三角形は 1/3 になったが、**時間は 1.5 倍に増えた**。
+ *    ★理由は確かめていないが、粗い許容差だと OCCT のメッシュ化が
+ *      難しい面で作り直しに入るのだと思われる（推測。断定しない）。
+ * ⇒ **細かさで時間は良くならない。** 効くのは
+ *      ・**三角形の数**（描画の軽さ・GLB の大きさ）
+ *    時間を決めるのは**部品の数**（`PART_SOFT` の注記）。
+ * ★`occt-import-js` の既定は **`bounding_box_ratio` / 0.001 / 0.5**
+ *   （原典 `importer.cpp` の `ImportParams()` で確認）。`normal` はそれに合わせた。
  */
 const OCCT_LV = {
-  fast:   { nm: '速い（粗い）',   linearDeflection: 0.006,  angularDeflection: 1.2 },
-  normal: { nm: 'ふつう',         linearDeflection: 0.002,  angularDeflection: 0.6 },
-  fine:   { nm: '細かい（遅い）', linearDeflection: 0.0005, angularDeflection: 0.3 }
+  /* 🔴 **名前に「速い」と書かない。** 実測で**粗くすると遅くなった**。
+     効くのは**三角形の数**＝描画の軽さと GLB の大きさ。時間ではない。 */
+  fast:   { nm: '粗い（三角形が少ない）',   linearDeflection: 0.006,  angularDeflection: 1.2 },
+  normal: { nm: 'ふつう（既定と同じ）',     linearDeflection: 0.001,  angularDeflection: 0.5 },
+  fine:   { nm: '細かい（三角形が多い）',   linearDeflection: 0.0003, angularDeflection: 0.25 }
 };
 let occtLv = 'auto';                  /* auto / fast / normal / fine */
 
-/** ファイルの大きさから段を決める（`auto` のとき）*/
+/**
+ * ファイルの大きさから段を決める（`auto` のとき）。
+ * 🔴 **速さのためではない。** 実測で粗くすると遅くなった。
+ *    大きいものを粗くするのは**描画が重くなりすぎないため**
+ *    （8,646 部品で三角形 300万 は回すのが辛い）。
+ * ⚠️ 既定（`normal`）が一番速かったので、**中くらいまでは既定のまま**にする。
+ */
 function occtLvFor(bytes){
   if (occtLv !== 'auto') return occtLv;
-  if (bytes > 8 * 1048576) return 'fast';
-  if (bytes > 1.5 * 1048576) return 'normal';
-  return 'fine';
+  if (bytes > 30 * 1048576) return 'fast';    /* ★描画を守るため（速さではない）*/
+  if (bytes > 1.5 * 1048576) return 'normal'; /* ★既定が一番速かった */
+  return 'fine';                              /* 小さい部品は検図向けに細かく */
 }
 /** 実際に渡す設定を作る */
 function occtParamsFor(bytes){
@@ -885,8 +906,12 @@ async function draw(buf, kind, tAll){
   /* ★粗さを決めて**画面に出す**（黙って粗くしない）*/
   const lv = occtParamsFor(buf.length);
   log('変換の細かさ：<b>' + lv.nm + '</b>' +
-      (occtLv === 'auto' ? '（大きさから自動。上の「細かさ」で変えられます）' : '') +
-      '　★粗いほど速く、三角形も減ります');
+      (occtLv === 'auto' ? '（大きさから自動。上の「細かさ」で変えられます）' : ''));
+  log('　⚠️ <b>細かさで変換は速くなりません。</b>同じファイルの実測で、' +
+      '既定 338 秒（三角形 300万）→ 粗い 512 秒（三角形 100万）と' +
+      '**粗いほうが遅くなりました**。');
+  log('　★効くのは**三角形の数**（描画の軽さ・GLB の大きさ）。' +
+      '時間を決めるのは**部品の数**です。');
   log('変換中…　<button id="cvstop">中止する</button>');
   let lastTick = 0;
   result = await occtInWorker(buf, kind, sec2 => {
@@ -973,10 +998,11 @@ function finishModel(g, tAll, tri){
         '次からは GLB で開いてください。</b>', 'ng');
     log('　★いま「表示」→「<b>GLB で書き出す</b>」を押して保存しておけば、' +
         '**次からは1秒ほどで開きます**（変換が要らないので）。');
-    log('　⚠️ 時間の主は**部品ごとの処理**（' +
-        (model ? countNodes(model).toLocaleString() : '?') +
-        ' 節点）なので、三角形を粗くしても劇的には減りません。' +
-        '**GLB にするのが効きます。**');
+    log('　⚠️ 時間の主は**部品ごとの処理**なので、' +
+        '**三角形を粗くしても速くなりません**（実測：既定 338秒 → 粗い 512秒）。' +
+        '**GLB にするのが唯一効きます。**');
+    log('　★次に切り出すときは、一覧で**部品数の少ないもの**を選んでください' +
+        '（時間は部品数にほぼ比例します）。');
     log('　⚠️ GLB は**写し**です。STEP を改訂したら作り直してください。');
   }
   if (tri > 2000000)
@@ -3936,8 +3962,20 @@ const SZ_STOP = 800 * 1048576;    /* これを超えたら止める */
       形を組み立て直すのでファイルの数倍**のメモリを使う。同じ数字で考えてはいけない。
    ⚠️ 変換部品は **32bit の WASM で 4GB が天井**。RAM を積んでも変わらない。
    ★実機で 900MB がメモリ不足で開けなかった（2026-08-24）。 */
-const STEP_SOFT = 250 * 1048576;  /* これ以下なら開ける見込み */
-const STEP_HARD = 600 * 1048576;  /* これを超えるとほぼ無理 */
+const STEP_SOFT = 250 * 1048576;  /* これ以下なら開ける見込み（メモリの話）*/
+const STEP_HARD = 600 * 1048576;  /* これを超えるとほぼ無理（メモリの話）*/
+/* 🔴 **変換の時間を決めるのは「部品の数」。** メモリとは別の壁。
+   ★実測（2026-08-25、実機）
+     ・21.4MB・**8,646 部品** → 既定の細かさで **338 秒**
+     ・同じものを「粗い」にしても **470 秒を超えても終わらない**
+   ⇒ **三角形の細かさはほとんど効かない。** 部品ごとの処理（読み取り・healing・
+      メッシュ化の立ち上げ）が支配していて、そこは粗くしても減らない。
+   ⇒ **部品数で選ぶ。** 時間はおおむね部品数に比例する。
+      8,646 で 6 分なら、1,500 で 1 分ほど。 */
+const PART_SOFT = 1500;           /* これ以下なら1分程度の見込み */
+const PART_HARD = 4000;           /* これを超えると数分〜十数分 */
+/** 部品数から変換時間のあたりを出す（実測 8,646 部品 = 338 秒 を基準に）*/
+function partSec(leaf){ return Math.max(1, Math.round(leaf * 338 / 8646)); }
 
 /**
  * @return {boolean} 進めてよいか
@@ -4559,35 +4597,48 @@ function cutRender(){
     .join('<span class="cs">›</span>');
   /* ★行 */
   const body = scanTops.length ? scanTops.map((t, i) => {
-    const big = t.est > STEP_HARD;
-    const warn = !big && t.est > STEP_SOFT;
+    /* ★メモリの目安（バイト）と**時間の目安（部品数）**は別。両方出す */
+    const memBad = t.est > STEP_HARD, memMid = !memBad && t.est > STEP_SOFT;
+    const pBad = t.leaf > PART_HARD, pMid = !pBad && t.leaf > PART_SOFT;
+    const est = partSec(t.leaf);
+    const tstr = est >= 60 ? (Math.round(est / 6) / 10) + ' 分' : est + ' 秒';
     return '<div class="cutr">' +
       (t.kids
         ? '<span class="nm dn" data-into="' + i + '" title="中へ降りる：' +
           esc(t.name) + '">' + esc(t.name) + '　<b>▸' + t.kids + '</b></span>'
         : '<span class="nm" title="' + esc(t.name) + '">' + esc(t.name) + '</span>') +
-      '<span class="sz' + (big ? ' big' : warn ? ' mid' : '') + '">部品 ' +
-        t.leaf.toLocaleString() + '　' + mb(t.est) + '</span>' +
+      /* 🔴 **時間を決めるのは部品数**なので、そちらを先に大きく出す */
+      '<span class="sz' + (pBad ? ' big' : pMid ? ' mid' : '') +
+        '" title="変換にかかる時間は部品数にほぼ比例します（実測 8,646 部品 = 338 秒）">' +
+        '部品 ' + t.leaf.toLocaleString() + '　およそ ' + tstr + '</span>' +
+      '<span class="sz2' + (memBad ? ' big' : memMid ? ' mid' : '') +
+        '" title="メモリの目安">' + mb(t.est) + '</span>' +
       '<button data-cut="' + t.pd + '" data-i="' + i + '">切り出して開く</button>' +
       '</div>';
   }).join('') : '<div class="cutr"><span class="nm">' +
       'これ以上の下は無し（部品そのもの）</span></div>';
   const cur = here === null ? null : r.subtree(here);
   phSay('<b>切り出すサブ組立を選んでください</b><span>' +
-    '🔴 <b>RAM を積んでも大きい STEP は開きません。</b>' +
-    '変換部品が 32bit なので <b>4GB より広い場所を使えない</b>のが壁です。' +
-    'STEP は OCCT が形を組み立て直すので、<b>ファイルの数倍</b>のメモリを使います。<br>' +
-    '★<b>' + mb(STEP_SOFT) + ' あたりを目安に、それより大きければ名前を押して' +
-    '<b>中へ降りて</b>ください。</b>' +
+    '🔴 <b>時間を決めるのは「部品の数」です。</b>' +
+    '実測：<b>8,646 部品で 338 秒</b>' +
+    '（三角形を粗くしたら <b>512 秒に増えました</b>。細かさでは速くなりません）。<br>' +
+    '★<b>部品 ' + PART_SOFT.toLocaleString() + ' くらいまで</b>を狙って、' +
+    'それより多ければ名前を押して<b>中へ降りて</b>ください。<br>' +
+    '⚠️ 右のバイト数は<b>メモリ</b>の目安です（' + mb(STEP_SOFT) + ' 以下が安全）。' +
+    'RAM を積んでも変換部品が 32bit なので 4GB より広い場所は使えません。<br>' +
+    '★<b>一度開いたら「表示 → GLB で書き出す」</b>。次からは1秒で開きます。' +
     (cur ? '<br>いまの階層：部品のべ ' + cur.leaf.toLocaleString() +
-           '　目安 ' + mb(cutEst(here)) : '') +
+           '（およそ ' + (partSec(cur.leaf) >= 60
+             ? (Math.round(partSec(cur.leaf) / 6) / 10) + ' 分' : partSec(cur.leaf) + ' 秒') +
+           '）　' + mb(cutEst(here)) : '') +
     '</span>' +
     '<div class="cutb">' + crumb + '</div>' +
     '<div class="cutl"><div class="cuth">' +
       '名前を押すと<b>中へ降りる</b>（<b>▸</b> の数は直下の品目数）／' +
-      '<span style="color:#3fb950">緑</span>は開けそう・' +
-      '<span style="color:#e3b341">黄</span>は重い・' +
-      '<span style="color:#f85149">赤</span>は無理' +
+      '左の数字＝<b>部品数と変換時間</b>／右＝メモリの目安／' +
+      '<span style="color:#3fb950">緑</span>は実用・' +
+      '<span style="color:#e3b341">黄</span>は数分・' +
+      '<span style="color:#f85149">赤</span>は十数分以上' +
       '</div>' + body + '</div>' +
     '<button id="phback">別のファイルを選ぶ</button>');
 }

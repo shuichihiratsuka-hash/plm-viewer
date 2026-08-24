@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>STEP ビューア（実験）</title>
+<title>3D ビューア（実験）</title>
 <!--
   plm-gas の 3D を「この画面で回す」ための実験。★まだ製品ではない。
 
@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824h</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824j</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -105,7 +105,7 @@ a{color:var(--accent-hi)}
        （2026-08-23 に実機で発生。OneDrive に落とした .stp が選べなかった）。
        ⇒ 何でも選べるようにして、**種別の判定は JS でやる**。 -->
   <input type="file" id="f" style="display:none">
-  <button class="pri" id="pick">STEP を選ぶ</button>
+  <button class="pri" id="pick">ファイルを選ぶ</button>
   <button id="drv" style="display:none">Drive から</button>
   <!-- ★上は「入口」と「持ち出し」だけ。見る道具は**下のバー**に移した
        （AutoDesk と同じ置き方。上に全部並べると小さくて押せない）-->
@@ -150,10 +150,17 @@ a{color:var(--accent-hi)}
   background:rgba(13,20,36,.94);border:1px solid #1e2a44;border-radius:10px;
   box-shadow:0 4px 14px rgba(0,0,0,.4);}
 #opt.on{display:flex;}
-#opt .lb{font-size:12px;color:#7f92b5;}
-#opt .sep{width:1px;height:18px;background:#1e2a44;margin:0 3px;}
-#opt button{padding:5px 10px;font-size:12px;}
-#opt button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}
+/* 🔴 **見出しとボタンを見分けられるようにする。**
+   ⚠️ 以前はどちらも暗い地に薄い字で、**押せるものがどれか分からなかった**
+      （本人の指摘：「メニューに名前と、押すボタンが色味が同じでよくわからん」）。
+   ⇒ 見出しは**小さく・彩度を落とし・枠なし**、ボタンは**明るい地＋はっきりした枠**。 */
+#opt .lb{font-size:11px;color:#66789a;letter-spacing:.03em;padding:0 1px;
+  white-space:nowrap;}
+#opt .sep{width:1px;height:18px;background:#2a3a5c;margin:0 4px;}
+#opt button{padding:5px 11px;font-size:12px;min-height:32px;
+  background:#1e2b47;border-color:#37496f;color:#dce7fb;}
+#opt button:hover{background:#27375c;border-color:#4a5f8c;}
+#opt button.on{background:#1d4ed8;border-color:#4b7bff;color:#fff;font-weight:700;}
 #opt input[type=range]{width:170px;}
 #opt input[type=range]:disabled{opacity:.4;}
 
@@ -279,7 +286,7 @@ a{color:var(--accent-hi)}
     <div class="bl" id="bml"><div class="bw">
       E-BOM を貼り付けて「突き合わせる」を押してください。</div></div>
   </div>
-  <div id="ph"><b>STEP を選んでください</b>
+  <div id="ph"><b>ファイルを選んでください</b>
     <span><code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code> が読めます。<br>
       ★<b>大きい組立は GLB にしてから</b>お持ちください（STEP は 800MB あたりが限界です）。<br>
       iPhone は「ファイル」アプリから選びます（Drive・OneDrive どちらでも）。<br>
@@ -328,7 +335,13 @@ const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
 const logEl = document.getElementById('log');
 let lines = [];
 function log(t, cls){
-  lines.push(cls ? '<span class="' + cls + '">' + t + '</span>' : t);
+  /* ★`**ここ**` を太字にする。
+     ⚠️ ログの文はコードの中に `**…**` で書いてあるのに、ログは HTML なので
+        **アスタリスクがそのまま画面に出ていた**（実機のログで気付いた）。
+     ⚠️ HTML を混ぜて渡す行（Drive のリンクなど）があるので、
+        タグは壊さず `**…**` だけを置き換える。 */
+  const t2 = String(t).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  lines.push(cls ? '<span class="' + cls + '">' + t2 + '</span>' : t2);
   /* ⚠️ **際限なく溜めない。** 実機で「〜だけ表示しています」が何十行も並んで
      ログ欄が絵を押しのけていた。★古い行から捨てる（500行）*/
   if (lines.length > 500) lines = lines.slice(-500);
@@ -336,6 +349,16 @@ function log(t, cls){
   /* ★スクロールするのは `#log` 自身（`footer` ではなくなった）*/
   logEl.scrollTop = 1e6;
 }
+
+/* ★ログの中の「それでも試す」を受ける。
+   ⚠️ ログは innerHTML で作り直すので、**入れ物への委譲**で受ける
+      （行ごとに結線すると作り直すたびに外れる）。 */
+logEl.addEventListener('click', ev => {
+  const b = ev.target.closest ? ev.target.closest('[data-force]') : null;
+  if (!b || !szLast) return;
+  szForce = true;
+  open(szLast);
+});
 
 /* ══════════════════════════════════════════════════════════════════════
    下のログ欄の高さ
@@ -457,6 +480,12 @@ function resize(){
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
+/* 🔴 **窓の大きさが変わらなくても canvas の大きさは変わる。**
+   ⚠️ 下のログを畳む・境界を動かす・段が増えて折り返す——どれも `resize` の
+      催促が来ないので、**縦横比が古いまま伸びて見えていた**
+      （本人の指摘：「下のコメント欄を最小化すると上のモデルの画面が伸びる」）。
+   ⇒ **canvas 自身の大きさを見張る。** これで原因を問わず全部拾える。 */
+if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(cv);
 /* 🔴 **描画ループは宣言より前に走る。**
    このループは module の途中で始まるが、`cubeDraw` / `mItems` は**この下**で
    `const` / `let` で宣言されている。だから最初のフレームは **TDZ で落ちる**。
@@ -476,15 +505,66 @@ var measReady = false;      /* ★計測の用意ができたか */
   requestAnimationFrame(loop);
 })();
 
+/**
+ * 画面に収める。
+ * 🔴 **いま見ている向きのまま収める。**
+ *    ⚠️ 以前は等角の位置へ置き直していたので、**「収める」つもりが「向きも戻る」**に
+ *       なっていた（本人の指摘：「フィット/向きボタンでも同じ」）。
+ *    ★向きを戻したいときは「ホーム」を押す。役目を分ける。
+ */
+/**
+ * 画面に**ちょうど**収まる距離を出す。
+ * 🔴 **当て推量（外形の半径 × 2.4）をやめる。**
+ *    ⚠️ 2.4 倍は縦長・横長の組立や画面の縦横比によって**足りない**。
+ *       実測（225×120×120 を等角で）で**下が 11px 切れていた**。
+ * ★やり方：箱の8隅について「視野に入る条件」を解いて、**一番きつい隅**に合わせる。
+ *    カメラを `c + dir*d` に置くと、隅 `v = p - c` について
+ *      奥行き = d − v·dir、横のずれ = v·right、縦のずれ = v·up
+ *    視野に入る条件は |v·right| ≤ (d − v·dir)·tanH かつ |v·up| ≤ (d − v·dir)·tanV。
+ *    これを d について解いて最大を取る。
+ */
+function fitDist(box, c, dir){
+  /* ★向きを当ててから、その姿勢の右・上を読む（`camera.up` の指定も効かせる）*/
+  camera.position.copy(c).addScaledVector(dir, 1);
+  camera.lookAt(c);
+  camera.updateMatrixWorld(true);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const tanV = Math.tan(camera.fov * Math.PI / 360);
+  const tanH = tanV * Math.max(camera.aspect, 1e-6);
+  let d = 0;
+  const v = new THREE.Vector3();
+  for (let k = 0; k < 8; k++) {
+    v.set(k & 1 ? box.max.x : box.min.x,
+          k & 2 ? box.max.y : box.min.y,
+          k & 4 ? box.max.z : box.min.z).sub(c);
+    const along = v.dot(dir);
+    d = Math.max(d, along + Math.abs(v.dot(right)) / tanH,
+                    along + Math.abs(v.dot(up)) / tanV);
+  }
+  return d * 1.06;                    /* ★少しだけ余白を取る */
+}
+
+/**
+ * 画面に収める。
+ * 🔴 **いま見ている向きのまま収める。**
+ *    ⚠️ 以前は等角の位置へ置き直していたので、**「収める」つもりが「向きも戻る」**に
+ *       なっていた（本人の指摘：「フィット/向きボタンでも同じ」）。
+ *    ★向きを戻したいときは「ホーム」を押す。役目を分ける。
+ */
 function fit(){
   if (!model) return;
   const box = new THREE.Box3().setFromObject(model);
   if (box.isEmpty()) return;
   const c = box.getCenter(new THREE.Vector3());
   const r = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+  /* ★いまの視線の向きを取り出す（初回など向きが無いときだけ等角にする）*/
+  const dir = camera.position.clone().sub(controls.target);
+  if (!(dir.lengthSq() > 1e-12)) dir.set(1, .8, 1);
+  dir.normalize();
   controls.target.copy(c);
   camera.near = r / 500; camera.far = r * 500;
-  camera.position.copy(c).add(new THREE.Vector3(1, .8, 1).setLength(r * 2.4));
+  camera.position.copy(c).addScaledVector(dir, fitDist(box, c, dir));
   camera.updateProjectionMatrix(); controls.update();
 }
 document.getElementById('fit').onclick = fit;
@@ -596,7 +676,9 @@ function finishModel(g, tAll, tri){
    ⚠️ スクリーンショットは canvas をそのまま取るので、**この色がそのまま入る**。
    ★覚える。既定は暗い色（本人の指示）。
    ══════════════════════════════════════════════════════════════════════ */
-const BG_KEY = 'plmvBgWhite';
+/* 🔴 **覚えない。** 立ち上げるたびに**暗い色**から始める（本人の指示）。
+   ⚠️ 以前は `localStorage` に覚えていたので、一度白にすると**次に開いたときも白**で、
+      「既定が白背景」に見えていた。白は「手順書に貼るときだけ」の一時の設定。 */
 let bgWhite = false;
 
 function bgSet(white){
@@ -610,7 +692,11 @@ function bgSet(white){
   dl.intensity = bgWhite ? 1.9 : 1.5;
   const c = document.getElementById('bgwc');
   if (c) c.checked = bgWhite;
-  try { localStorage.setItem(BG_KEY, bgWhite ? '1' : '0'); } catch (e) {}
+  /* ★ここで覚えない（上のとおり）*/
+  /* ★線の色を背景に合わせ直す。
+     🔴 `dispReady` は **`var`**（巻き上げで `undefined`）。
+        `dWire` などは下で `let` 宣言なので、初期化時に触ると TDZ で落ちる。 */
+  if (dispReady) applyEdge();
 }
 
 document.getElementById('bgwc').addEventListener('change', function(){
@@ -639,18 +725,38 @@ function bbox(){
 }
 
 /** 面に合わせて見る。xy → Z 軸方向から、yz → X 軸方向から、zx → Y 軸方向から */
-function viewTo(kind){
+/**
+ * 見る向きを変える。
+ *
+ * 🔴 **既定は「その場で」向きだけ変える。** 見ている場所と寄り具合は変えない。
+ *    ⚠️ 以前は毎回モデル全体の中心へ寄り直していたので、**部品を拡大して見ている
+ *       途中で向きを変えると全体表示に飛ばされた**（本人の指摘：
+ *       「向きを押すとデフォルトでホーム位置に行ってしまう」）。
+ *    ★`home = true` のときだけ全体に収め直す（「ホーム」ボタン専用）。
+ */
+function viewTo(kind, home){
   const b = bbox(); if (!b) return;
-  const d = b.r * 2.4, f = flipView ? -1 : 1;
-  const dir = kind === 'xy' ? new THREE.Vector3(0, 0, d * f)
-            : kind === 'yz' ? new THREE.Vector3(d * f, 0, 0)
-            : kind === 'zx' ? new THREE.Vector3(0, d * f, 0)
-            : new THREE.Vector3(1, .8, 1).setLength(d);
+  const f = flipView ? -1 : 1;
+  /* ★いま見ている場所と距離を引き継ぐ（`home` のときだけ全体に戻す）*/
+  const tgt = home ? b.c.clone() : controls.target.clone();
+  const dir = kind === 'xy' ? new THREE.Vector3(0, 0, f)
+            : kind === 'yz' ? new THREE.Vector3(f, 0, 0)
+            : kind === 'zx' ? new THREE.Vector3(0, f, 0)
+            : new THREE.Vector3(1, .8, 1).normalize();
   /* ⚠️ 真上・真下から見るときは up を変える（up と視線が平行だと絵が消える）*/
   camera.up.set(0, 1, 0);
   if (kind === 'zx') camera.up.set(0, 0, -1 * f);
-  controls.target.copy(b.c);
-  camera.position.copy(b.c).add(dir);
+  /* ★`home` のときは**ちょうど収まる距離**を計算する（当て推量を使わない）*/
+  let d;
+  if (home) {
+    const box = new THREE.Box3().setFromObject(model);
+    d = box.isEmpty() ? b.r * 2.4 : fitDist(box, tgt, dir);
+  } else {
+    d = camera.position.distanceTo(controls.target);
+    if (!isFinite(d) || d < b.r * 1e-4) d = b.r * 2.4;
+  }
+  controls.target.copy(tgt);
+  camera.position.copy(tgt).addScaledVector(dir, d);
   camera.near = b.r / 500; camera.far = b.r * 500;
   camera.updateProjectionMatrix(); controls.update();
 }
@@ -1070,7 +1176,10 @@ function optHtml(t){
       '<button id="donly">だけ表示</button>' +
       '<button id="dall">全部表示</button>' +
       '<span class="sep"></span>' +
-      '<button id="dglb">GLB で書き出す</button>';
+      '<button id="dglb">GLB で書き出す</button>' +
+      /* ★☑した部品だけの GLB。**大きい組立をここで割るための道具** */
+      '<button id="dglbs" title="ツリーで☑した部品だけの GLB を作ります。'
+        + '大きい組立をサブ組立に割るのに使います">選んだ部品だけ GLB</button>';
   if (t === 'meas')
     return '<span class="lb">測る</span>' +
       '<button data-m="dist" class="mt">⟷ 距離</button>' +
@@ -1081,10 +1190,19 @@ function optHtml(t){
       /* 🔴 **近似だと必ず書く。** AutoDesk も `~` を付けている */
       '<span class="lb">★およその値です（三角形に割った形の上で測っています）</span>';
   if (t === 'expl')
-    return '<span class="lb">分解</span>' +
+    return '<span class="lb">開く量</span>' +
       '<input type="range" id="expl" min="0" max="100" value="' + explVal + '">' +
       '<span id="explval" class="lb">' + explVal + '%</span>' +
-      '<button id="explz">戻す</button>';
+      '<button id="explz">戻す</button>' +
+      '<span class="sep"></span>' +
+      /* ★開く向き。既定は軸方向（放射は板を開きたいときだけ）*/
+      '<span class="lb">開く向き</span>' +
+      '<button data-ea="auto" class="eax">自動</button>' +
+      '<button data-ea="x" class="eax">X 軸</button>' +
+      '<button data-ea="y" class="eax">Y 軸</button>' +
+      '<button data-ea="z" class="eax">Z 軸</button>' +
+      '<button data-ea="radial" class="eax">放射</button>' +
+      '<span id="explax" class="lb"></span>';
   if (t === 'sec')
     return '<button id="secon">切る</button>' +
       '<span class="lb">面を合わせる</span>' +
@@ -1110,7 +1228,8 @@ function navSet(t){
      ⚠️ ただしモード（画面移動・ズーム・オービット）は閉じない
         — 「どれかが選ばれている」状態が常に要る */
   const isMode = (t === 'pan' || t === 'zoom' || t === 'orbit');
-  if (t === 'home') { flipView = false; viewTo('iso'); return; }
+  /* ★「ホーム」だけが全体表示に戻す役目（`fit` と `viewTo` は場所を保つ）*/
+  if (t === 'home') { flipView = false; viewTo('iso', true); return; }
   if (t === 'fit')  { fit(); return; }
   if (t === 'tree') { treeShow(!treeOpen); navSync(); return; }
   if (t === 'bom')  { bomShow(!bomOpen); navSync(); return; }
@@ -1125,6 +1244,8 @@ function navSet(t){
   opt.innerHTML = h;
   opt.classList.toggle('on', !!h);
   if (navTool === 'sec') secSync();     /* ★作り直した段に今の状態を当てる */
+  /* ★作り直した段に今の状態を当てる（開く向きと％の表示）*/
+  if (navTool === 'expl') { explSync(); explApply(); }
   if (navTool === 'view' && flipView) {
     const f = document.getElementById('flipv');
     if (f) f.classList.add('on');
@@ -1177,6 +1298,11 @@ document.getElementById('opt').addEventListener('click', ev => {
     mHint();
     return;
   }
+  if (b.classList.contains('eax')) {
+    explAxis = b.getAttribute('data-ea');
+    explSync(); explApply(); return;
+  }
+  if (b.id === 'dglbs')  { exportGlb(true); return; }
   if (b.id === 'dwire')  { dWire = !dWire; dispApply(); return; }
   if (b.id === 'dedge')  { dEdge = !dEdge; dispApply(); return; }
   if (b.id === 'dghost') {
@@ -1228,11 +1354,7 @@ document.getElementById('opt').addEventListener('input', ev => {
 });
 
 /* ★背景の初期化はここ（`secFrame` などの宣言が済んでから）*/
-(function bgInit(){
-  let w = false;
-  try { w = localStorage.getItem(BG_KEY) === '1'; } catch (e) {}
-  bgSet(w);
-})();
+bgSet(false);          /* ★いつも暗い色から始める */
 
 navMode('orbit');
 
@@ -1502,16 +1624,23 @@ function cubeDraw(){
   const q = new THREE.Quaternion();
   camera.getWorldQuaternion(q);
   cubeMesh.quaternion.copy(q).invert();
-  const dpr = renderer.getPixelRatio();
-  const x = (w - CUBE_PX - 10) * dpr, y = (h - CUBE_PX - 10) * dpr;
-  const sz = CUBE_PX * dpr;
+  /* 🔴 **画素比をかけてはいけない。**
+     `setViewport` / `setScissor` は **CSS 画素**で受け取り、three.js が
+     内部で `_pixelRatio` を掛けて `gl.viewport` に渡す。
+     ⚠️ ここで自分でも掛けていたので **二重**になっていた。結果：
+        ・箱の一角が**画面の外**に行き、**ViewCube は一度も見えていなかった**
+        ・戻すときの `w * dpr` も二重になり、**本体のビューポートが 1.5 倍**に。
+          モデルが**拡大されて左下に寄り、右と上が切れていた**
+          （本人の画面が「いつも寄りすぎ」に見えていた正体）。
+     ★2026-08-24、canvas の画素を直に読んで突き止めた
+       （的はちゃんと画面中央に投影されるのに、絵は 1.5 倍ずれて出ていた）。 */
   renderer.setScissorTest(true);
-  renderer.setViewport(x, y, sz, sz);
-  renderer.setScissor(x, y, sz, sz);
+  renderer.setViewport(w - CUBE_PX - 10, h - CUBE_PX - 10, CUBE_PX, CUBE_PX);
+  renderer.setScissor(w - CUBE_PX - 10, h - CUBE_PX - 10, CUBE_PX, CUBE_PX);
   renderer.clearDepth();               /* ⚠️ 本体の奥行きを引き継がせない */
   renderer.render(cubeScene, cubeCam);
   renderer.setScissorTest(false);
-  renderer.setViewport(0, 0, w * dpr, h * dpr);
+  renderer.setViewport(0, 0, w, h);
 }
 
 /** 一角を押したか。押した面の名前を返す（外なら null）*/
@@ -1729,27 +1858,61 @@ measReady = true;          /* ★ここまでで計測の用意ができた */
    ⚠️ **離す単位は「葉の部品」**（メッシュ単位で離すと1つの部品がばらける）。
    ══════════════════════════════════════════════════════════════════════ */
 let explParts = null, explVal = 0;
+/* 🔴 **既定は「軸方向」。**
+   ⚠️ 以前は中心から外へ**放射方向**に動かしていたので、
+      **軸から外れた部品が斜めに飛んだ**（本人の指摘：
+      「変な方向に分解される部品がある。（斜めに移動？）軸方向、穴方向に移動しない？」）。
+   ★組立はふつう1本の軸に沿って重なっているので、**その軸に沿って開く**のが正しい。
+   ★`auto` は**外形が一番長い軸**を選ぶ（フランジ・カバー・ボルトはこの軸に並ぶ）。
+   ★放射は残す（板を平面に開きたいときに要る）。 */
+let explAxis = 'auto';
+let explSize = null;      /* モデルの外形の大きさ（軸ごとの長さ）*/
+
+/** 段の「開く向き」のボタンに今の状態を当てる */
+function explSync(){
+  document.querySelectorAll('#opt .eax').forEach(b =>
+    b.classList.toggle('on', b.getAttribute('data-ea') === explAxis));
+}
+
+/** `auto` のときに使う軸。★外形が一番長い軸 */
+function explMainAxis(){
+  const z = explSize || { x: 1, y: 1, z: 1 };
+  if (z.x >= z.y && z.x >= z.z) return 'x';
+  return (z.y >= z.z) ? 'y' : 'z';
+}
 
 function explBuild(){
   explParts = [];
   if (!model) return;
   const b2 = bbox(); if (!b2) return;
-  const leaves = [];
-  (function walk(o){
-    if (o.isMesh && o.parent === model) { leaves.push(o); return; }
-    /* ⚠️ GLB は素の `Object3D` なので `isGroup` では拾えない（`isCont` を使う）*/
-    if (!isCont(o)) return;
-    const g = o.children.filter(isCont);
-    if (o !== model && g.length === 0) { leaves.push(o); return; }
-    o.children.forEach(walk);
-  })(model);
-  leaves.forEach(o => {
+  explSize = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  /* ★葉の決め方は**ツリーと同じ規則**（`walkParts`）。別に書くと食い違う */
+  walkParts(o => {
     const bb = new THREE.Box3().setFromObject(o);
     if (bb.isEmpty()) return;
+    /* ★中心からのずれを覚える。向きは**動かすたびに**ここから作る
+       （軸を変えても組み直さなくて済む）*/
     const c = bb.getCenter(new THREE.Vector3()).sub(b2.c);
-    if (c.lengthSq() < 1e-9) c.set(0, 1, 0);
-    explParts.push({ o: o, base: o.position.clone(), dir: c.normalize() });
+    explParts.push({ o: o, base: o.position.clone(), c: c });
   });
+}
+
+/**
+ * その部品を動かす向きと量（長さが 0〜1 くらい）。
+ * ★軸方向は**軸上の位置に比例**させる。だから**並び順が崩れず**、
+ *   同じ位置にある物（フランジのボルト一周）は**一緒に動く**。
+ * ★軸の真ん中にある物（本体）はほとんど動かない。これが見やすい。
+ */
+function explDir(q){
+  if (explAxis === 'radial') {
+    const v = q.c.clone();
+    if (v.lengthSq() < 1e-9) v.set(0, 1, 0);
+    return v.normalize();
+  }
+  const k = (explAxis === 'auto') ? explMainAxis() : explAxis;
+  const half = Math.max((explSize ? explSize[k] : 1) / 2, 1e-6);
+  const u = new THREE.Vector3(k === 'x' ? 1 : 0, k === 'y' ? 1 : 0, k === 'z' ? 1 : 0);
+  return u.multiplyScalar(q.c[k] / half);
 }
 
 function explApply(){
@@ -1760,7 +1923,12 @@ function explApply(){
   if (!explParts) explBuild();
   const b2 = bbox();
   const d = (b2 ? b2.r : 50) * 1.2 * (explVal / 100);
-  explParts.forEach(q => { q.o.position.copy(q.base).addScaledVector(q.dir, d); });
+  explParts.forEach(q => { q.o.position.copy(q.base).addScaledVector(explDir(q), d); });
+  /* ★いま何の軸で開いているかを出す（`auto` は選ばれた軸も見せる）*/
+  const ax = document.getElementById('explax');
+  if (ax) ax.textContent = explAxis === 'radial' ? '放射'
+    : explAxis === 'auto' ? ('自動（' + explMainAxis().toUpperCase() + ' 軸）')
+    : (explAxis.toUpperCase() + ' 軸');
   if (model) model.updateMatrixWorld(true);
   secSyncMatrices();
   mLabels();
@@ -1804,28 +1972,61 @@ function dispSync(){
   set('dwire', dWire); set('dedge', dEdge); set('dghost', dGhost);
 }
 
+/** 稜線を作れる大きさか。★線を作るのは重いので上限を持つ */
+function edgeOK(){
+  return !!(model && triOf(model) <= EDGE_MAX_TRI);
+}
+
+/**
+ * ワイヤーフレーム。
+ *
+ * 🔴 **CAD の「ワイヤーフレーム」は稜線だけの絵。**
+ *    ⚠️ `material.wireframe = true` は**三角形を全部**描くので**網**になる
+ *       （本人の指摘：「ワイヤー表示がメッシュになってない？」）。
+ *       ⇒ 面は **色を書かず奥行きだけ書く**（`colorWrite = false`）。
+ *         こうすると**手前の面が奥の線を隠す**＝製図と同じ**隠線処理**になる。
+ *         線は `applyEdge` が折れ角 20 度以上の稜線だけ描く。
+ *    ⚠️ 三角形が多すぎて稜線を作れないときは、**網で代用**して画面にそう出す
+ *       （黙って何も出ないのが一番困る）。
+ */
 function applyWire(){
   if (!model) return;
+  const mesh = dWire && !edgeOK();      /* 代用（網）*/
+  const hide = dWire && !mesh;          /* 面を消して線だけにする */
   model.traverse(o => {
-    if (o.isMesh && o.material) { o.material.wireframe = dWire; o.material.needsUpdate = true; }
+    if (!o.isMesh || !o.material) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    ms.forEach(m => {
+      if (!m) return;
+      m.wireframe = mesh;
+      m.colorWrite = !hide;
+      m.needsUpdate = true;
+    });
   });
+  if (mesh) log('⚠️ 三角形が多いので、ワイヤーは三角形の網で代用しています', 'wa');
 }
 
 /** エッジ強調。★面の折れ角 20度以上の稜線だけ描く（全部描くと三角形の網になる）*/
 function applyEdge(){
   if (edgeGroup) { scene.remove(edgeGroup); edgeGroup = null; }
-  if (!dEdge || !model) return;
-  const tri = triOf(model);
-  if (tri > EDGE_MAX_TRI) {
-    dEdge = false; dispSync();
-    log('⚠️ 三角形が ' + Math.round(tri).toLocaleString() +
-        ' 個あるので、エッジ強調はやめました（' +
-        EDGE_MAX_TRI.toLocaleString() + ' 個まで）。' +
-        'ツリーで部品を絞ってからお試しください', 'wa');
+  /* ★線が要るのは「エッジ強調」だけでなく「ワイヤー」も（ワイヤーは線が本体）*/
+  if (!model || (!dEdge && !dWire)) return;
+  if (!edgeOK()) {
+    /* ⚠️ ワイヤーのときは `applyWire` が網で代用しているので、ここでは黙る */
+    if (dEdge) {
+      dEdge = false; dispSync();
+      log('⚠️ 三角形が ' + Math.round(triOf(model)).toLocaleString() +
+          ' 個あるので、エッジ強調はやめました（' +
+          EDGE_MAX_TRI.toLocaleString() + ' 個まで）。' +
+          'ツリーで部品を絞ってからお試しください', 'wa');
+    }
     return;
   }
   const g = new THREE.Group();
-  const mat = new THREE.LineBasicMaterial({ color: bgWhite ? 0x333333 : 0xf2d34a });
+  /* ★ワイヤーだけのときは**目立たない線**にする（黄色は「強調」の色なので使わない）*/
+  const col = (dWire && !dEdge) ? (bgWhite ? 0x1d2e46 : 0xa9c2e4)
+                                : (bgWhite ? 0x333333 : 0xf2d34a);
+  const mat = new THREE.LineBasicMaterial({ color: col });
   model.traverse(o => {
     if (!o.isMesh || !o.geometry) return;
     /* ⚠️ **見えていないものには付けない**（隠した部品の線が浮く）*/
@@ -1865,6 +2066,8 @@ function applyGhost(){
 function dispApply(){
   applyWire(); applyGhost(); applyEdge(); dispSync();
 }
+/* ★ここまで来たら表示系を触ってよい（`bgSet` が見ている。上の注記のとおり `var`）*/
+var dispReady = true;
 
 /* ══════════════════════════════════════════════════════════════════════
    GLB で書き出す
@@ -1877,11 +2080,46 @@ function dispApply(){
    ⚠️ 分解している状態で書き出すと**離れたまま**保存される。言う。
    ⚠️ 断面・エッジ・計測は**入らない**（`model` だけ渡すので）。言う。
    ══════════════════════════════════════════════════════════════════════ */
-function exportGlb(){
-  if (!model) { log('先に STEP を読んでください', 'wa'); return; }
-  const b2 = document.getElementById('dglb');
+/**
+ * GLB を書き出す。
+ * @param {boolean} onlySel ☑した部品だけにするか
+ *
+ * 🔴 **これが「STEP → GLB の変換」そのもの。** 外のサイトは要らない
+ *    （読む＝occt で変換 → ここで GLB として書き出す。端末から出ない）。
+ * ★`onlySel` は**大きい組立を割るための道具**。
+ *   2GB 級は読む前に無理（`sizeGate` の注記のとおり）なので、
+ *   「CAD でサブ組立に分けて書き出す」か「読める大きさに割って GLB を積む」。
+ */
+function exportGlb(onlySel){
+  if (!model) { log('先に 3D ファイルを読んでください', 'wa'); return; }
+  const bid = onlySel ? 'dglbs' : 'dglb';
+  const label = onlySel ? '選んだ部品だけ GLB' : 'GLB で書き出す';
+  const b2 = document.getElementById(bid);
   if (b2) { b2.disabled = true; b2.textContent = '書き出し中…'; }
-  function fin(){ if (b2) { b2.disabled = false; b2.textContent = 'GLB で書き出す'; } }
+  function fin(){ if (b2) { b2.disabled = false; b2.textContent = label; } }
+  /* ★☑した部品だけを写した入れ物を作る。
+     ⚠️ **元のモデルから外さない**（画面が壊れる）。`clone()` で写す。
+     ⚠️ `clone()` は**行列も一緒に写る**ので、位置関係はそのまま残る。 */
+  let target = model;
+  if (onlySel) {
+    const sel = selParts();
+    if (!sel.length) {
+      fin();
+      log('ツリーで部品を☑してから押してください（☑が空です）', 'wa');
+      return;
+    }
+    /* ★入れ子の☑は上位だけ残す（同じ形が二重に入るのを防ぐ）*/
+    const top = sel.filter(o => {
+      let q = o.parent;
+      while (q && q !== model.parent) { if (q._sel) return false; q = q.parent; }
+      return true;
+    });
+    const g = new THREE.Group();
+    g.name = (model.name || 'model') + '_選択';
+    top.forEach(o => g.add(o.clone(true)));
+    target = g;
+    log('☑した ' + top.length + ' 件だけを書き出します（元のモデルは触りません）');
+  }
   if (explVal > 0)
     log('⚠️ 分解しています（' + explVal + '%）。**離れたまま**書き出されます', 'wa');
   /* 🔴 **書き出す前にメッシュへ名前を移す。**
@@ -1892,25 +2130,28 @@ function exportGlb(){
      ⇒ 名前が空のメッシュに**一番近い親の名前**を移しておく。
      ⚠️ 名前を付けるだけなので、画面の見え方は変わらない。 */
   let named = 0;
-  model.traverse(o => {
+  target.traverse(o => {
     if (!o.isMesh || o.name) return;
     let q = o.parent, nm = '';
     while (q && q !== scene) { if (q.name) { nm = q.name; break; } q = q.parent; }
     if (nm) { o.name = nm; named++; }
   });
   if (named) log('　（部品名を ' + named + '件 メッシュへ写しました。GLB で名前が残ります）');
-  log('GLB を作っています…（三角形 ' + Math.round(triOf(model)).toLocaleString() + '）');
+  log('GLB を作っています…（三角形 ' + Math.round(triOf(target)).toLocaleString() + '）');
   try {
-    new GLTFExporter().parse(model, buf => {
+    new GLTFExporter().parse(target, buf => {
       try {
         const blob = new Blob([buf], { type: 'model/gltf-binary' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = String(shotName || 'model').replace(/\.[^.]+$/, '') + '.glb';
+        a.download = String(shotName || 'model').replace(/\.[^.]+$/, '') +
+                     (onlySel ? '_選択' : '') + '.glb';
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         log('✓ GLB を保存しました　' + mb(blob.size) +
             '（★三角形だけです。断面・エッジ・計測は入りません）', 'ok');
+        log('　★この GLB は「ファイルを選ぶ」からそのまま開けます' +
+            '（変換は要らないので速いです）。');
       } finally { fin(); }
     }, err => {
       fin();
@@ -2160,6 +2401,13 @@ document.getElementById('treel').addEventListener('click', ev => {
    ⚠️ **どこで壊れるかは実測していない。** だから
       「明らかに無理」だけ止め、その手前は**警告して通す**（勝手に諦めない）。
    ══════════════════════════════════════════════════════════════════════ */
+/* 🔴 **1本の ArrayBuffer の上限（実測）。**
+   2026-08-24、Chrome で二分探索して測った値。`2**31 - 1` バイトのすぐ下。
+   ⚠️ **これは occt に渡す前の壁**なので、ビューア側の工夫では越えられない。
+   ⚠️ 端末やブラウザで変わり得るが、**2GB の壁があること自体は変わらない**。 */
+const AB_MAX = 2046 * 1024 * 1024;
+/* ★「それでも試す」の状態。★1回使ったら戻す（次のファイルに引きずらない）*/
+let szForce = false, szLast = null;
 const SZ_WARN = 150 * 1048576;    /* これを超えたら警告して通す */
 const SZ_STOP = 800 * 1048576;    /* これを超えたら止める */
 
@@ -2170,13 +2418,44 @@ function sizeGate(bytes, name){
   const b = Number(bytes) || 0;
   if (!b) return true;                 /* 分からないときは通す（Drive が返さないことがある）*/
   if (b > SZ_STOP) {
-    log('✗ このファイルはこの画面では開けません（' + mb(b) + '）', 'ng');
-    log('　理由：ブラウザは**1本のかたまり**として読む必要があり、上限が約2GBです。');
-    log('　　　　読めても WASM へ丸ごと写すので**倍**要り、三角形も数千万になります。');
-    log('　代わりの手：');
-    log('　① **サブ組立ごとに STEP を書き出す**（この画面は部品と小さな組立向けです）');
-    log('　② **glTF / GLB（Draco 圧縮）で書き出す**。同じ形で 1/10 〜 1/50 になります');
-    log('　③ 全体を見るのは CAD か Autodesk Viewer など、専用のものを使う');
+    /* 🔴 **実測した数字で言う。** 2026-08-24 に Chrome で二分探索して測った：
+          **1本の ArrayBuffer の上限は 2046MB**（2³¹−1 バイトのすぐ下）。
+          これは occt に渡す**前**の壁なので、ビューア側では越えられない。
+       ★ただし **800MB〜2046MB は「たぶん無理」でしかない**（三角形の数次第）。
+         勝手に諦めさせず、**「それでも試す」を出して本人に決めてもらう**。 */
+    const hard = b > AB_MAX;
+    /* ★「それでも試す」を押していたら、確実に無理な場合以外は通す */
+    if (!hard && szForce) {
+      szForce = false;
+      log('⚠️ ' + mb(b) + ' を**そのまま試します**。落ちたらタブが閉じます', 'wa');
+      return true;
+    }
+    log('✗ ' + mb(b) + ' は' + (hard ? '**この画面では開けません**'
+                                     : 'かなり大きいので、止めています'), 'ng');
+    if (hard) {
+      log('　理由：ブラウザは**1本の連続したかたまり**として読む必要があり、');
+      log('　　　　その上限を実測すると **2046MB**（2³¹−1 バイト）でした。');
+      log('　　　　これは変換部品（occt）に渡す**前**の壁なので、越えられません。');
+    } else {
+      log('　理由：読めても WASM へ丸ごと写すので**倍**要り、三角形も数千万になります。');
+    }
+    log('　★<b>外のサイトに上げずに済む手</b>（どれも端末の中で終わります）：');
+    log('　① **元の CAD から glTF / GLB で直接書き出す**' +
+        '（SolidWorks 2019 以降・Inventor・Creo・NX。★これが一番きれい）');
+    log('　② **CAD Assistant**（Open CASCADE 製・無償・Windows のアプリ）で' +
+        'STEP → GLB。★この画面と**同じ変換部品**ですが、' +
+        'ネイティブ 64bit なのでブラウザの壁がありません');
+    log('　③ **サブ組立ごとに書き出す。** 読める大きさなら、この画面で読んで' +
+        '「選んだ部品だけ GLB」で更に割れます');
+    log('　⚠️ ①②はどちらも**自分の PC の中だけ**で、ファイルは外に出ません。');
+    /* ★行き止まりを作らない。**確実に無理な場合以外は「それでも試す」を出す。**
+       ⚠️ 落ちるかどうかは三角形の数次第で、こちらには分からない。
+          勝手に諦めさせるより、危険を書いて**本人に決めてもらう**。
+       ⚠️ 出すのは端末のファイルを選んだときだけ（Drive 経由は再実行の口が別）。 */
+    if (!hard && szLast)
+      log('　<button data-force="1">それでも試す</button>' +
+          '　★落ちたらタブごと閉じることになります。' +
+          '他の作業を保存してから押してください。', 'wa');
     return false;
   }
   if (b > SZ_WARN) {
@@ -2273,6 +2552,7 @@ function kindOf(name){
 let shotName = '';
 async function open(file){
   shotName = String(file && file.name || '');
+  szLast = file;                        /* ★「それでも試す」で読み直せるように覚える */
   if (busy) return;
   busy = true;
   document.getElementById('pick').disabled = true;
@@ -2280,8 +2560,8 @@ async function open(file){
   const kind = kindOf(file.name);
   if (!kind) {
     /* ⚠️ 読めないものを渡されたら**そう言う**（変換に投げて意味不明な失敗にしない）*/
-    log('✗ このファイルは読めません（拡張子が .stp / .step / .igs / .iges ではない）', 'ng');
-    log('　CAD から STEP で書き出したファイルを選んでください。');
+    log('✗ このファイルは読めません（.stp .step .igs .iges .glb .gltf のどれでもない）', 'ng');
+    log('　CAD から STEP か glTF / GLB で書き出したファイルを選んでください。');
     busy = false; document.getElementById('pick').disabled = false;
     document.getElementById('ph').style.display = '';
     return;
@@ -2612,7 +2892,7 @@ if (CFG.CLIENT_ID) {
   /* ⚠️ 指定されたのに読めないなら**そう言う**（黙って白くしない）*/
   log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');
   log('　Drive から読むには OAuth のクライアントIDが要ります（config.js が空です）。');
-  log('　いまは「STEP を選ぶ」から端末のファイルを選んでください。');
+  log('　いまは「ファイルを選ぶ」から端末のファイルを選んでください。');
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -2647,6 +2927,9 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       finishModel(g, performance.now(), 0);
       document.getElementById('ph').style.display = 'none';   /* 案内を隠す */
     },
+    /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
+    renderer,
+    renderNow() { renderer.render(scene, camera); },
     setSec(on, axis, pos, flip) {
       secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;
       if (pos !== undefined) {

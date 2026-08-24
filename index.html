@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824q</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824r</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -1177,9 +1177,26 @@ function navMode(t){
   else                   controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
   /* ⚠️ スマホの1本指も合わせる（回すつもりで動かしてしまうのを防ぐ）*/
   controls.touches.ONE = (t === 'pan') ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
-  /* カーソルで分かるようにする */
-  renderer.domElement.style.cursor =
-    t === 'pan' ? 'move' : t === 'zoom' ? 'zoom-in' : 'grab';
+  mCursor();
+}
+
+/**
+ * カーソルの形。
+ * 🔴 **計測中は十字。**
+ *    ⚠️ `navMode` が「回す」の `grab` を当てていたので、
+ *       計測の道具を選んでいても**掴めるように見えていた**（本人の指摘）。
+ *    ★点を狙う道具なので十字（矢印より狙いが分かる）。
+ */
+function mCursor(){
+  const el = renderer.domElement;
+  if (!el) return;
+  /* ⚠️ `mTool` はこの下で `let` 宣言なので、動き出しでは触れない。
+     `var` の旗（`measReady`）が立ってから見る。 */
+  let t = null;
+  if (typeof measReady !== 'undefined' && measReady) t = mTool;
+  el.style.cursor = t ? 'crosshair'
+    : navTool === 'pan' ? 'move'
+    : navTool === 'zoom' ? 'zoom-in' : 'grab';
 }
 
 /** 設定の段（選んだ道具のぶんだけ）*/
@@ -1286,6 +1303,7 @@ function navSet(t){
     mTool = null; mPend = []; mFacePend = []; mLinePend = null;
     if (snapMark) snapShow(null);          /* ★吸い付きの印も消す */
   }
+  mCursor();
   const opt = document.getElementById('opt');
   const h = optHtml(navTool);
   opt.innerHTML = h;
@@ -1340,6 +1358,7 @@ document.getElementById('opt').addEventListener('click', ev => {
     const v = b.getAttribute('data-m');
     mTool = (mTool === v) ? null : v;
     mPend = []; mFacePend = []; mLinePend = null;
+    mCursor();                             /* ★十字にする／戻す */
     document.querySelectorAll('#opt .mt').forEach(x =>
       x.classList.toggle('on', x.getAttribute('data-m') === mTool));
     mHint();
@@ -2089,6 +2108,17 @@ function mPick(ev){
   };
   const dist2 = q => { const a = px(q); return a[0] * a[0] + a[1] * a[1]; };
   const wp = i => h.object.localToWorld(new THREE.Vector3().fromBufferAttribute(pos, i));
+  /* 🔴 **画面で近いだけでは足りない。3D でも近くないといけない。**
+     ⚠️ 面を浅い角度から見ると、その面の**向こう側の外周**が画面では数画素の所に
+        来る。画面の距離だけで選んでいたので**遠い稜線へ飛んでいた**
+        （2026-08-24 実測：最大 141.7mm ずれた）。
+     ★当たった点の奥行きで「1画素が何ミリに見えるか」を出し、
+       効き幅（画素）× それ × 3 までに限る。
+     ⚠️ この条件は**選ぶ前**に効かせる（後で捨てると、近い候補があるのに
+        何にも吸い付かなくなる）。 */
+  const depth = camera.position.distanceTo(h.point);
+  const mmPx = 2 * depth * Math.tan(camera.fov * Math.PI / 360) / Math.max(r.height, 1);
+  const near3d = (q, radPx) => q.distanceTo(h.point) <= radPx * mmPx * 3;
   if (pos && h.face) {
     /* 🔴 吸い付く先は **B-rep の面の外周**だけ。
        ⚠️ 三角形の3辺には吸わない。**対角線は CAD に無い線**だから
@@ -2100,10 +2130,9 @@ function mPick(ev){
       let bv = null, bd = 1e18, be = null, bed = 1e18, bk = -1;
       for (let k = 0; k < m; k++) {
         const a = wp(bnd[k][0]), b2 = wp(bnd[k][1]);
-        /* ① 外周の点（＝本物の稜線の上の点）*/
-        const da = dist2(a), db = dist2(b2);
-        if (da < bd) { bd = da; bv = a; }
-        if (db < bd) { bd = db; bv = b2; }
+        /* ① 外周の点（＝本物の稜線の上の点）。★3D でも近いものだけ */
+        if (near3d(a, SNAP_V)) { const da = dist2(a); if (da < bd) { bd = da; bv = a; } }
+        if (near3d(b2, SNAP_V)) { const db = dist2(b2); if (db < bd) { bd = db; bv = b2; } }
         /* ② 外周の辺（画面の上で垂線を下ろす。見た目どおりに吸い付く）*/
         const pa = px(a), pb = px(b2);
         const ex = pb[0] - pa[0], ey = pb[1] - pa[1];
@@ -2113,7 +2142,10 @@ function mPick(ev){
         t = Math.max(0, Math.min(1, t));
         const qx = pa[0] + ex * t, qy = pa[1] + ey * t;
         const d = qx * qx + qy * qy;
-        if (d < bed) { bed = d; be = a.clone().lerp(b2, t); bk = k; }
+        if (d >= bed) continue;
+        const foot = a.clone().lerp(b2, t);
+        if (!near3d(foot, SNAP_E)) continue;         /* ★3D でも近いこと */
+        bed = d; be = foot; bk = k;
       }
       if (bv && bd < SNAP_V * SNAP_V)
         return { p: bv, snap: '稜線の点',
@@ -2126,7 +2158,10 @@ function mPick(ev){
          ★「およそ」と付けて返す（本物の角とは限らない）。 */
       const V = [h.face.a, h.face.b, h.face.c].map(wp);
       let bv = null, bd = 1e18;
-      V.forEach(v => { const d = dist2(v); if (d < bd) { bd = d; bv = v; } });
+      V.forEach(v => {
+        if (!near3d(v, SNAP_V)) return;             /* ★3D でも近いこと */
+        const d = dist2(v); if (d < bd) { bd = d; bv = v; }
+      });
       if (bv && bd < SNAP_V * SNAP_V) return { p: bv, snap: '頂点（およそ）' };
     }
   }
@@ -2367,12 +2402,15 @@ function snapShow(hit){
   if (!snapMark) {
     /* 角＝四角、稜線・面＝丸。★1つ作って形と色を差し替える */
     snapMark = new THREE.Group();
+    /* 角＝黄色い四角、稜線＝水色の丸、面＝細い輪（どこに付くか一目で分かるように）*/
     const sq = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshBasicMaterial({ color: 0xffd23f }));
     const ci = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10),
       new THREE.MeshBasicMaterial({ color: 0x35d7f5 }));
-    [sq, ci].forEach(o => { o.material.depthTest = false; o.renderOrder = 1200; });
-    snapMark.add(sq, ci);
+    const rg = new THREE.Mesh(new THREE.TorusGeometry(1, 0.16, 8, 28),
+      new THREE.MeshBasicMaterial({ color: 0xc8d6ea }));
+    [sq, ci, rg].forEach(o => { o.material.depthTest = false; o.renderOrder = 1200; });
+    snapMark.add(sq, ci, rg);
     scene.add(snapMark);
   }
   if (!snapTag) {
@@ -2391,10 +2429,13 @@ function snapShow(hit){
   snapMark.visible = true;
   snapMark.position.copy(hit.p);
   snapMark.children[0].visible = isCorner;
-  snapMark.children[1].visible = !isCorner;
-  snapMark.children[0].scale.setScalar(sz * 0.016);
-  snapMark.children[1].scale.setScalar(sz * (isEdge ? 0.010 : 0.006));
-  snapMark.children[1].material.color.set(isEdge ? 0x35d7f5 : 0x93a4bd);
+  snapMark.children[1].visible = isEdge;
+  snapMark.children[2].visible = !isCorner && !isEdge;      /* 面 → 輪 */
+  snapMark.children[0].scale.setScalar(sz * 0.020);
+  snapMark.children[1].scale.setScalar(sz * 0.013);
+  snapMark.children[2].scale.setScalar(sz * 0.016);
+  /* ★輪はカメラの方を向かせる（斜めだと潰れて見えない）*/
+  snapMark.children[2].quaternion.copy(camera.quaternion);
   /* 文字はカーソルの少し右上 */
   const r = renderer.domElement.getBoundingClientRect();
   snapTag.style.display = '';

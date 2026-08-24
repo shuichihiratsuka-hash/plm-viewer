@@ -65,11 +65,29 @@ main{flex:1;position:relative;min-height:14rem}
 #ph.on{background:rgba(14,165,233,.10);outline:2px dashed var(--accent);outline-offset:-8px}
 #ph b{font-size:15px}
 #ph span{color:var(--ink3);font-size:12px;max-width:22rem}
-footer{background:var(--card);border-top:1px solid var(--line);
-  padding:.6rem .8rem calc(.6rem + env(safe-area-inset-bottom));
-  max-height:42vh;overflow:auto}
+/* ══ 下のログ欄 ══════════════════════════════════════════════════
+   ★既定は**3行ぶん**。⚠️ 以前は `max-height:42vh` で、ログが増えると
+     **絵の面積を食っていた**（実機で画面の半分近くを占めていた）。
+   ★境界（`#fgrip`）を掴んで上下に動かせる。畳める。覚える。
+   🔴 ライセンスの表示は**畳んでも消さない**（LGPL-2.1 / MIT の表示は義務）。
+   ══════════════════════════════════════════════════════════════ */
+footer{--fh:56px;background:var(--card);border-top:1px solid var(--line);
+  padding:0 .8rem calc(.4rem + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;flex:none;}
+/* 掴む所。★細すぎると押せないので**当たりを 9px** 取り、線は真ん中に細く描く */
+#fgrip{position:relative;height:9px;margin:0 -.8rem;cursor:ns-resize;flex:none;}
+#fgrip::after{content:'';position:absolute;left:50%;top:3px;width:44px;height:3px;
+  transform:translateX(-50%);border-radius:2px;background:#2a3a5c;}
+#fgrip:hover::after{background:#3f5a8c;}
+footer .hd{display:flex;align-items:center;gap:8px;padding:2px 0 0;flex:none;}
+footer .hd .sp{flex:1;}
+footer .hd button{padding:1px 8px;font-size:11px;}
+/* ログ本体だけがスクロールする。★高さは変数で持つ（1か所で決める）*/
+#log{height:var(--fh);overflow:auto;flex:none;}
+footer.fold #log{display:none;}
+footer.fold{--fh:0px;}
 .hd{font-size:12px;color:var(--ink2)}
-#log{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;margin:.35rem 0 0;
+#log{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;margin:.3rem 0 0;
   color:var(--ink2)}
 .ok{color:var(--ok)} .ng{color:var(--ng)} .wa{color:var(--wa)}
 .lic{margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--line);
@@ -78,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824b</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824c</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -200,8 +218,16 @@ a{color:var(--accent-hi)}
       ファイルはこの端末から出ません（このページはサーバに何も送りません）</span></div>
 </main>
 <footer>
-  <div class="hd">測るもの：<b>WASM の読み込み</b>／<b>変換</b>／<b>三角形の数</b>／<b>合計</b></div>
+  <!-- ★境界。ここを掴んで上下に動かす。⚠️ 押しやすい高さ（8px）を確保する -->
+  <div id="fgrip" title="上下にドラッグして高さを変えられます"></div>
+  <div class="hd">
+    <span>測るもの：<b>WASM の読み込み</b>／<b>変換</b>／<b>三角形の数</b>／<b>合計</b></span>
+    <span class="sp"></span>
+    <button id="fclr" title="ログを消します">消す</button>
+    <button id="ftog" title="畳む／開く">▾</button>
+  </div>
   <div id="log">（まだ何も読み込んでいません）</div>
+  <!-- 🔴 ライセンスは**畳む対象の外**（表示が義務。畳んでも消さない）-->
   <div class="lic">
     3D の読み込みに <a href="https://github.com/kovacsv/occt-import-js" target="_blank" rel="noopener">occt-import-js</a>
     （<a href="licenses/LGPL-2.1.occt-import-js.txt">LGPL-2.1</a>／
@@ -221,15 +247,84 @@ a{color:var(--accent-hi)}
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+/* ★断面の面を掴んで動かすため。⚠️ r169 以降は `getHelper()` を scene に足す */
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
 const logEl = document.getElementById('log');
 let lines = [];
 function log(t, cls){
   lines.push(cls ? '<span class="' + cls + '">' + t + '</span>' : t);
+  /* ⚠️ **際限なく溜めない。** 実機で「〜だけ表示しています」が何十行も並んで
+     ログ欄が絵を押しのけていた。★古い行から捨てる（500行）*/
+  if (lines.length > 500) lines = lines.slice(-500);
   logEl.innerHTML = lines.join('\n');
-  logEl.parentElement.scrollTop = 1e6;
+  /* ★スクロールするのは `#log` 自身（`footer` ではなくなった）*/
+  logEl.scrollTop = 1e6;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   下のログ欄の高さ
+   ══════════════════════════════════════════════════════════════════════
+   ★境界を掴んで上下に。畳める。覚える。
+   ⚠️ `localStorage` は使えないことがあるので try で囲む。
+   ══════════════════════════════════════════════════════════════════════ */
+const FT = document.querySelector('footer');
+const FH_KEY = 'plmvFooterH', FF_KEY = 'plmvFooterFold';
+
+function ftSet(h){
+  const max = Math.round(innerHeight * 0.6);
+  const v = Math.max(0, Math.min(max, Math.round(h)));
+  FT.style.setProperty('--fh', v + 'px');
+  try { localStorage.setItem(FH_KEY, String(v)); } catch (e) {}
+}
+function ftFold(on){
+  FT.classList.toggle('fold', !!on);
+  const b = document.getElementById('ftog');
+  if (b) { b.textContent = on ? '▴' : '▾'; b.title = on ? '開く' : '畳む'; }
+  try { localStorage.setItem(FF_KEY, on ? '1' : '0'); } catch (e) {}
+}
+(function ftInit(){
+  let h = 56, f = false;
+  try {
+    const a = localStorage.getItem(FH_KEY); if (a !== null) h = Number(a) || 56;
+    f = localStorage.getItem(FF_KEY) === '1';
+  } catch (e) {}
+  ftSet(h); ftFold(f);
+})();
+
+document.getElementById('ftog').addEventListener('click',
+  () => ftFold(!FT.classList.contains('fold')));
+document.getElementById('fclr').addEventListener('click', () => {
+  lines = []; logEl.innerHTML = '（消しました）';
+});
+
+/* ★境界のドラッグ。`setPointerCapture` で外れないようにする（2D 側と同じ作法）*/
+(function ftGrip(){
+  const g = document.getElementById('fgrip');
+  let st = null;
+  g.addEventListener('pointerdown', ev => {
+    st = { y: ev.clientY, h: FT.getBoundingClientRect().height,
+           lh: parseFloat(getComputedStyle(FT).getPropertyValue('--fh')) || 0 };
+    try { g.setPointerCapture(ev.pointerId); } catch (e) {}
+    /* ★畳んでいる状態から掴んだら開く（動かしても何も起きないのを避ける）*/
+    if (FT.classList.contains('fold')) { ftFold(false); st.lh = 0; }
+    ev.preventDefault();
+  });
+  g.addEventListener('pointermove', ev => {
+    if (!st) return;
+    /* 上へ動かすと高くなる */
+    ftSet(st.lh + (st.y - ev.clientY));
+    ev.preventDefault();
+  });
+  function up(ev){
+    if (!st) return;
+    st = null;
+    try { g.releasePointerCapture(ev.pointerId); } catch (e) {}
+  }
+  g.addEventListener('pointerup', up);
+  g.addEventListener('pointercancel', up);
+})();
 /* ★行き止まりを作らない。
    plm から「3D」を押した人は**ここが最後の窓**なので、読めない・権限が無い
    ときに文言だけ出して終わると、Drive を自分で探し直すことになる。
@@ -262,7 +357,17 @@ scene.background = new THREE.Color(0x080d18);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1e6);
 camera.position.set(200, 160, 220);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+/* 🔴 **慣性（damping）は切る。**（2026-08-24「ふわふわする」と指摘された）
+   `enableDamping = true` は**離しても動き続ける**ので、狙った所で止まらない。
+   ⚠️ これは**処理のラグではない**（治具は 140,046 三角形で軽い）。
+   ★AutoDesk の操作感は「掴んだ分だけ動く」。合わせる。 */
+controls.enableDamping = false;
+/* ★掴んだ量に対する動き方も少し詰める（既定は緩い）*/
+controls.rotateSpeed = 0.9;
+controls.zoomSpeed = 1.1;
+controls.panSpeed = 1.0;
+/* ⚠️ **ズームに慣性を入れない**（`zoomToCursor` は入れる。狙った所へ寄れる）*/
+controls.zoomToCursor = true;
 scene.add(new THREE.HemisphereLight(0xdfefff, 0x0a1020, 1.1));
 const dl = new THREE.DirectionalLight(0xffffff, 1.5);
 dl.position.set(1, 1.4, 1); scene.add(dl);
@@ -425,6 +530,11 @@ function spin(axis, deg){
 renderer.localClippingEnabled = true;
 
 const secPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+/* ★面の位置と向きは `secCtl` が持つ。**法線は `secCtl` の +Z**。
+   ⚠️ 軸（X/Y/Z）は「その向きに合わせる」ボタンになった（自由な向きも取れる）*/
+const secCtl = new THREE.Object3D();
+scene.add(secCtl);
+let secTC = null, secFrame = null, secMode = 'translate';
 let secOn = false, secAxis = 'z', secFlip = false;
 /* ★部品ごとに1組（ステンシルのグループ ＋ 蓋）。⚠️ 1組にまとめない（上の説明のとおり）*/
 let secParts = [];        /* [{group, cap}] */
@@ -469,6 +579,8 @@ function secBuild(){
   /* 前のものを片付ける */
   secParts.forEach(p => { scene.remove(p.group); scene.remove(p.cap); });
   secParts = []; secMerged = false;
+  /* ★モデルが変わったら面を Z に戻して真ん中へ（前のモデルの向きを引きずらない）*/
+  secMode = 'translate';
   if (!model) return;
   const b = bbox(); if (!b) return;
 
@@ -520,10 +632,95 @@ function secBuild(){
     secParts.push({ group: g, cap: cap, src: set });
   });
 
+  /* ★面の四角い枠。**どこを切っているか見えないと狙えない**
+     ⚠️ **蓋と同じ大きさにしない。** 蓋はモデル全体を覆う必要があるので `r*4` だが、
+        枠を `r*4` で描くと**画面を横切る線**になって、面に見えない
+        （2026-08-24 にローカルで捕まえた）。★枠はモデルの大きさ＋少しにする。 */
+  if (secFrame) { scene.remove(secFrame); secFrame = null; }
+  /* ★**単位の四角**（±0.5）で作って、`secApply` で大きさを当てる。
+     ⚠️ 向きを変えると断面の広がりも変わるので、作った時の大きさで固定できない。 */
+  const fg = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, -0.5, 0),
+    new THREE.Vector3(0.5, 0.5, 0), new THREE.Vector3(-0.5, 0.5, 0),
+    new THREE.Vector3(-0.5, -0.5, 0)]);
+  secFrame = new THREE.Line(fg, new THREE.LineDashedMaterial({
+    color: 0x7fd4ff, dashSize: b.r * 0.05, gapSize: b.r * 0.035 }));
+  secFrame.computeLineDistances();      /* ★破線はこれを呼ばないと出ない */
+  secFrame.renderOrder = 900;
+  secFrame.material.depthTest = false;
+  secFrame.visible = false;
+  scene.add(secFrame);
+
+  /* ★掴んで動かす矢印。
+     🔴 **r169 以降は `getHelper()` を scene に足す**（`scene.add(tc)` では出ない）。
+     ⚠️ OrbitControls と取り合いになるので、掴んでいる間は回すのを止める。 */
+  if (!secTC) {
+    secTC = new TransformControls(camera, renderer.domElement);
+    secTC.setSpace('local');            /* ★Z が面の法線 */
+    secTC.setSize(0.9);
+    secTC.addEventListener('dragging-changed', ev => { controls.enabled = !ev.value; });
+    secTC.addEventListener('objectChange', () => { secToSlider(); secApply(); });
+    const h = secTC.getHelper ? secTC.getHelper() : secTC;
+    h.visible = false;
+    scene.add(h);
+  }
+  secTC.attach(secCtl);
+  secSetMode(secMode);
+  secToAxis(secAxis);
+
   /* ★モデル本体は**全部の蓋より後**に描く（先に描くと蓋に隠れる）*/
   const last = groups.length * 2 + 5;
   meshes.forEach(o => { o.renderOrder = last; });
   secApply();
+}
+
+/** 面の法線（`secCtl` の +Z）*/
+function secNormal(){
+  return new THREE.Vector3(0, 0, 1).applyQuaternion(secCtl.quaternion).normalize();
+}
+
+/** 法線方向にモデルがどこからどこまであるか（bbox の8隅を射影する）*/
+function secSpan(){
+  const b = bbox(); if (!b) return null;
+  const nv = secNormal(), a = [];
+  [b.box.min.x, b.box.max.x].forEach(x =>
+    [b.box.min.y, b.box.max.y].forEach(y =>
+      [b.box.min.z, b.box.max.z].forEach(z =>
+        a.push(new THREE.Vector3(x, y, z).dot(nv)))));
+  return { lo: Math.min.apply(null, a), hi: Math.max.apply(null, a) };
+}
+
+/** その軸に面を合わせる（自由な向きから戻すときにも使う）*/
+function secToAxis(ax){
+  secAxis = ax;
+  const nv = ax === 'x' ? new THREE.Vector3(1, 0, 0)
+           : ax === 'y' ? new THREE.Vector3(0, 1, 0)
+                        : new THREE.Vector3(0, 0, 1);
+  secCtl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), nv);
+  secCtl.updateMatrixWorld();
+  secFromSlider();
+}
+
+/** スライダの値 → 面の位置（法線方向に動かす）*/
+function secFromSlider(){
+  const b = bbox(), sp = secSpan();
+  if (!b || !sp) return;
+  const nv = secNormal();
+  const t = secPosVal / 1000;
+  const d = sp.lo + (sp.hi - sp.lo) * t;
+  /* ★横方向はモデルの中心に置く（面はどこを通っても同じだが、枠の見た目が中央に来る）*/
+  secCtl.position.copy(b.c).addScaledVector(nv, d - b.c.dot(nv));
+  secCtl.updateMatrixWorld();
+}
+
+/** 面の位置 → スライダの値（掴んで動かしたときに追従させる）*/
+function secToSlider(){
+  const sp = secSpan(); if (!sp) return;
+  const d = secCtl.position.dot(secNormal());
+  const t = (sp.hi - sp.lo) ? (d - sp.lo) / (sp.hi - sp.lo) : 0.5;
+  secPosVal = Math.max(0, Math.min(1000, Math.round(t * 1000)));
+  const ps = document.getElementById('secpos');
+  if (ps) ps.value = secPosVal;
 }
 
 /** 面の向きと位置を作る。★スライダは 0〜1000 を境界の間に写す */
@@ -532,17 +729,10 @@ function secApply(){
   const posEl = document.getElementById('secpos');
   const valEl = document.getElementById('secval');
   if (!b) { if (valEl) valEl.textContent = '—'; return; }
-  const nrm = secAxis === 'x' ? new THREE.Vector3(1, 0, 0)
-            : secAxis === 'y' ? new THREE.Vector3(0, 1, 0)
-                              : new THREE.Vector3(0, 0, 1);
+  const nrm = secNormal();
   if (secFlip) nrm.negate();
-  const lo = b.box.min[secAxis], hi = b.box.max[secAxis];
-  /* ⚠️ スライダは「断面」を選んだときだけ在る。無いときは覚えている値を使う
-     （`secApply` はツリーの操作からも呼ばれる）*/
-  const t = (posEl ? (Number(posEl.value) || 0) : secPosVal) / 1000;
-  const at = lo + (hi - lo) * t;
-  /* 平面の式：n·x + d = 0。★`at` を通す */
-  const pt = new THREE.Vector3(); pt[secAxis] = at;
+  /* ★面は `secCtl` が持っている（掴んで動かせるので、軸と数値だけでは決まらない）*/
+  const pt = secCtl.position.clone();
   secPlane.setFromNormalAndCoplanarPoint(nrm.clone().negate(), pt);
 
   /* ★材料に面を当てる（`clippingPlanes` はモデル側の材料に持たせる）*/
@@ -567,13 +757,60 @@ function secApply(){
     p.cap.position.addScaledVector(nrm, -b.r * 1e-4);
     p.cap.updateMatrixWorld();
   });
+  /* ★枠と矢印を面に合わせる */
+  if (secFrame) {
+    secFrame.visible = secOn;
+    secFrame.position.copy(pt);
+    secFrame.quaternion.copy(secCtl.quaternion);
+    /* ★**面に沿った方向のモデルの広がり**に合わせる。
+       ⚠️ bbox の対角（`r`）で作ると**画面を横切る大きさ**になって面に見えない
+          （2026-08-24 にローカルで2回踏んだ）。★8隅を面の X/Y に射影して測る。 */
+    const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(secCtl.quaternion);
+    const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(secCtl.quaternion);
+    let ax = 0, ay = 0;
+    [b.box.min.x, b.box.max.x].forEach(x =>
+      [b.box.min.y, b.box.max.y].forEach(y =>
+        [b.box.min.z, b.box.max.z].forEach(z => {
+          const v = new THREE.Vector3(x, y, z).sub(pt);
+          ax = Math.max(ax, Math.abs(v.dot(ex)));
+          ay = Math.max(ay, Math.abs(v.dot(ey)));
+        })));
+    secFrame.scale.set(ax * 2.1, ay * 2.1, 1);   /* ★少しだけ外に出す */
+    secFrame.updateMatrixWorld();
+  }
+  if (secTC) {
+    const h = secTC.getHelper ? secTC.getHelper() : secTC;
+    h.visible = secOn;
+    secTC.enabled = secOn;
+  }
   if (valEl) valEl.textContent = secOn
-    ? (secAxis.toUpperCase() + ' = ' + at.toFixed(2) +
-       (secMerged ? '（切り口は1色）' : '（切り口は部品ごとの色）'))
+    ? ('切っています　' + (secTilted() ? '（自由な向き）' : secAxis.toUpperCase() + ' 面') +
+       (secMerged ? '　切り口は1色' : ''))
     : '切っていません';
 }
 
 /** 断面の道具の見た目を合わせる */
+/** 矢印の役目を変える。★移動は法線方向だけ／回転は面を傾ける2軸だけ */
+function secSetMode(m){
+  secMode = m;
+  if (!secTC) return;
+  secTC.setMode(m === 'rotate' ? 'rotate' : 'translate');
+  if (m === 'rotate') {
+    /* ⚠️ Z 回り（面の中で回す）は**見た目が変わらない**ので出さない */
+    secTC.showX = true; secTC.showY = true; secTC.showZ = false;
+  } else {
+    /* ⚠️ 面に沿って動かしても切り口は変わらないので、**法線方向だけ** */
+    secTC.showX = false; secTC.showY = false; secTC.showZ = true;
+  }
+}
+
+/** 軸に合っていないか（＝自由な向きに傾けたか）*/
+function secTilted(){
+  const nv = secNormal();
+  const ax = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+  return !ax.some(a => Math.abs(Math.abs(nv.dot(a)) - 1) < 1e-3);
+}
+
 /** 断面の道具の見た目を合わせる。
     ⚠️ **要素が無くても落ちないこと。** 設定の段は「断面」を選んだときだけ
        作られるので、閉じている間はどれも居ない（`secApply` は常に走る）。 */
@@ -584,7 +821,13 @@ function secSync(){
     on.textContent = secOn ? '切るのをやめる' : '切る';
   }
   document.querySelectorAll('#opt .sax').forEach(b => {
-    b.classList.toggle('on', secOn && b.getAttribute('data-s') === secAxis);
+    /* ⚠️ 自由な向きに傾けているときは**どの軸も光らせない**（嘘になる）*/
+    b.classList.toggle('on',
+      secOn && !secTilted() && b.getAttribute('data-s') === secAxis);
+    b.disabled = !secOn;
+  });
+  document.querySelectorAll('#opt .smd').forEach(b => {
+    b.classList.toggle('on', secOn && b.getAttribute('data-sm') === secMode);
     b.disabled = !secOn;
   });
   const ps = document.getElementById('secpos');
@@ -631,9 +874,16 @@ function optHtml(t){
       '<button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>';
   if (t === 'sec')
     return '<button id="secon">切る</button>' +
-      '<span class="lb">面</span>' +
+      '<span class="lb">面を合わせる</span>' +
       '<button data-s="x" class="sax">X</button><button data-s="y" class="sax">Y</button>' +
       '<button data-s="z" class="sax">Z</button>' +
+      '<span class="sep"></span>' +
+      /* ★矢印の役目。AutoDesk と同じで「押し引き」と「傾ける」を分ける */
+      '<span class="lb">矢印</span>' +
+      '<button data-sm="translate" class="smd" title="法線の向きに押し引きします">' +
+        '⇕ 動かす</button>' +
+      '<button data-sm="rotate" class="smd" title="面を傾けます">⟲ 傾ける</button>' +
+      '<span class="sep"></span>' +
       '<input type="range" id="secpos" min="0" max="1000" value="' + secPosVal + '">' +
       '<span id="secval" class="lb">—</span>' +
       '<button id="secflip" title="切る向きを反対にします">反転</button>';
@@ -697,14 +947,21 @@ document.getElementById('opt').addEventListener('click', ev => {
   }
   if (b.id === 'secon') { secOn = !secOn; secSync(); secApply(); return; }
   if (b.classList.contains('sax')) {
-    secAxis = b.getAttribute('data-s'); secSync(); secApply(); return;
+    secToAxis(b.getAttribute('data-s')); secSync(); secApply(); return;
+  }
+  if (b.classList.contains('smd')) {
+    secSetMode(b.getAttribute('data-sm')); secSync(); return;
   }
   if (b.id === 'secflip') {
     secFlip = !secFlip; b.classList.toggle('on', secFlip); secApply(); return;
   }
 });
 document.getElementById('opt').addEventListener('input', ev => {
-  if (ev.target.id === 'secpos') { secPosVal = Number(ev.target.value) || 0; secApply(); }
+  if (ev.target.id === 'secpos') {
+    secPosVal = Number(ev.target.value) || 0;
+    secFromSlider();                    /* ★スライダ → 面の位置 */
+    secApply();
+  }
 });
 
 navMode('orbit');
@@ -881,6 +1138,47 @@ document.getElementById('treel').addEventListener('click', ev => {
   secApply();                   /* ★isolate でも蓋を合わせ直す */
 });
 
+/* ══════════════════════════════════════════════════════════════════════
+   大きさの関門
+   ══════════════════════════════════════════════════════════════════════
+   🔴 **落としてから失敗するのをやめる。**
+      2.29GB の STEP で `Failed to fetch` になった（2026-08-24）。理由は3つ重なる：
+      ① `arrayBuffer()` は**1本の連続した ArrayBuffer**。ブラウザの上限は
+         概ね **2GB（2^31-1）**。2291MB は**これを超えている**
+      ② 通っても occt（WASM）へ**丸ごとコピー**する ＝ 約2倍。
+         **WASM32 のアドレス空間は 4GB が上限**
+      ③ 通っても三角形が出る。治具 10.5MB で 140,046 なので、
+         単純比で 2.29GB は**3千万三角形**の規模
+   ⚠️ **どこで壊れるかは実測していない。** だから
+      「明らかに無理」だけ止め、その手前は**警告して通す**（勝手に諦めない）。
+   ══════════════════════════════════════════════════════════════════════ */
+const SZ_WARN = 150 * 1048576;    /* これを超えたら警告して通す */
+const SZ_STOP = 800 * 1048576;    /* これを超えたら止める */
+
+/**
+ * @return {boolean} 進めてよいか
+ */
+function sizeGate(bytes, name){
+  const b = Number(bytes) || 0;
+  if (!b) return true;                 /* 分からないときは通す（Drive が返さないことがある）*/
+  if (b > SZ_STOP) {
+    log('✗ このファイルはこの画面では開けません（' + mb(b) + '）', 'ng');
+    log('　理由：ブラウザは**1本のかたまり**として読む必要があり、上限が約2GBです。');
+    log('　　　　読めても WASM へ丸ごと写すので**倍**要り、三角形も数千万になります。');
+    log('　代わりの手：');
+    log('　① **サブ組立ごとに STEP を書き出す**（この画面は部品と小さな組立向けです）');
+    log('　② **glTF / GLB（Draco 圧縮）で書き出す**。同じ形で 1/10 〜 1/50 になります');
+    log('　③ 全体を見るのは CAD か Autodesk Viewer など、専用のものを使う');
+    return false;
+  }
+  if (b > SZ_WARN) {
+    log('⚠️ ' + mb(b) + ' あります。読み込みに時間がかかり、' +
+        'スマホでは落ちる可能性があります（このまま進めます）', 'wa');
+    log('　⚠️ 失敗しても**ブラウザには残りません**（押し直すと丸ごと落ち直します）。');
+  }
+  return true;
+}
+
 /** 読める形か。★accept で絞れないので**ここで**見る（拡張子だけが手掛かり）*/
 function kindOf(name){
   const n = String(name || '').toLowerCase();
@@ -905,8 +1203,11 @@ async function open(file){
     document.getElementById('ph').style.display = '';
     return;
   }
-  if (file.size > 30 * 1048576) {
-    log('⚠️ 30MB を超えています。スマホでは落ちる可能性があります', 'wa');
+  /* ★大きさの判断は `sizeGate` の1か所（Drive 側と同じ関門を通す）*/
+  if (!sizeGate(file.size, file.name)) {
+    busy = false; document.getElementById('pick').disabled = false;
+    document.getElementById('ph').style.display = '';
+    return;
   }
   if (model) { scene.remove(model); model = null; }
   document.getElementById('ph').style.display = 'none';
@@ -1108,8 +1409,14 @@ async function openDrive(id){
       driveOut(id, 'この形式は回せません（' + info.name + '）');
       return;
     }
+    /* 🔴 **落とす前に断る。** 2.29GB を落としてから失敗するのは、
+       通信も時間も無駄（しかもキャッシュに残らないので毎回落ち直す）*/
+    if (!sizeGate(info.size, info.name)) {
+      driveOut(id, 'この画面では大きすぎます（' + mb(+info.size) + '）');
+      return;
+    }
     const t0 = performance.now();
-    log('ダウンロード中…');
+    log('ダウンロード中…（★ブラウザには残りません。失敗しても押し直すと落ち直します）');
     const dl = await fetch('https://www.googleapis.com/drive/v3/files/' +
       encodeURIComponent(id) + '?alt=media', { headers: { Authorization: 'Bearer ' + tk } });
     if (!dl.ok) { driveOut(id, '✗ ダウンロードできませんでした（' + dl.status + '）'); return; }

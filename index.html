@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824e</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824f</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -498,9 +498,13 @@ async function draw(buf, kind, tAll){
   treeShow(true);
   navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
   toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
-  secOn = false; secFlip = false;
-  document.getElementById('secpos').value = 500;
-  document.getElementById('secflip').classList.remove('on');
+  /* 🔴 **段の中の部品を直に触らない。**
+     `#secpos` / `#secflip` は「断面」を選んだときだけ作られる。
+     読み込みの直後は段が閉じている（`navSet('orbit')` したところ）ので
+     **null になり `Cannot set properties of null` で落ちる**
+     （2026-08-24 に実データの読み込みで出た。私が段を可変にしたときの取りこぼし）。
+     ★状態は**変数側**（`secPosVal` など）で持ち、段は `secSync` が合わせる。 */
+  secOn = false; secFlip = false; secPosVal = 500;
   secBuild(); secSync(); secApply();
   log('三角形 ' + tri.toLocaleString() + '　頂点 ' + vtx.toLocaleString());
   log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');

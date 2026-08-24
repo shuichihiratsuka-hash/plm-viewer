@@ -90,6 +90,7 @@ a{color:var(--accent-hi)}
   <button class="pri" id="pick">STEP を選ぶ</button>
   <button id="drv" style="display:none">Drive から</button>
   <button id="fit" disabled>全体</button>
+  <button id="treebtn">部品ツリー</button>
 </header>
 <!-- ★2段目。モデルを読むまで隠す（押せないボタンを並べない）-->
 <div id="tools" style="display:none">
@@ -125,8 +126,34 @@ a{color:var(--accent-hi)}
 #tools input[type=range]{width:150px;}
 #tools input[type=range]:disabled{opacity:.4;}
 </style>
+<style>
+/* 部品ツリー。★絵の上にかぶせる（画面を狭くしない）*/
+#tree{position:absolute;left:10px;top:10px;bottom:10px;width:290px;z-index:5;
+  display:none;flex-direction:column;background:rgba(8,13,24,.92);
+  border:1px solid #1e2a44;border-radius:8px;overflow:hidden;}
+#tree .th{display:flex;align-items:center;gap:6px;padding:7px 9px;
+  border-bottom:1px solid #1e2a44;font-size:12px;color:#c9d6ee;}
+#tree .th b{font-size:12px;}
+#tree .th .sp{flex:1;}
+#tree .tl{flex:1;overflow:auto;padding:4px 0;}
+#tree .tr{display:flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;
+  color:#c9d6ee;cursor:pointer;white-space:nowrap;}
+#tree .tr:hover{background:#16203a;}
+#tree .tr.dim{color:#5f6f8f;}
+#tree .tw{width:14px;text-align:center;color:#7f92b5;flex:none;}
+#tree .te{width:14px;text-align:center;color:#7f92b5;flex:none;}
+#tree .tn{overflow:hidden;text-overflow:ellipsis;}
+#tree .tc{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
+#treebtn{display:none;}
+</style>
 <main>
   <canvas id="cv"></canvas>
+  <div id="tree">
+    <div class="th"><b>部品ツリー</b><span class="sp"></span>
+      <button id="trall" title="全部表示に戻します">全部表示</button>
+      <button id="trclose" title="閉じます">✕</button></div>
+    <div class="tl" id="treel"></div>
+  </div>
   <div id="ph"><b>STEP を選んでください</b>
     <span><code style="font-family:var(--mono)">.stp .step .igs .iges</code> が読めます。<br>
       iPhone は「ファイル」アプリから選びます（Drive・OneDrive どちらでも）。<br>
@@ -260,32 +287,30 @@ async function draw(buf, kind, tAll){
   if (!result || !result.success) { log('✗ 変換に失敗しました（STEP として読めない）', 'ng'); return; }
   log('✓ 変換完了　' + sec(tConv) + '　メッシュ ' + result.meshes.length + ' 個', 'ok');
 
-  /* occt の attributes は three.js に**そのまま渡せる形**（README のとおり）*/
-  const g = new THREE.Group();
-  let tri = 0, vtx = 0;
-  for (const m of result.meshes) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
-    if (m.attributes.normal)
-      geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
-    geo.setIndex(new THREE.Uint32BufferAttribute(m.index.array, 1));
-    if (!m.attributes.normal) geo.computeVertexNormals();
-    vtx += m.attributes.position.array.length / 3;
-    tri += m.index.array.length / 3;
-    const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2])
-                        : new THREE.Color(0x9fb4cc);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      color: col, metalness: .15, roughness: .62, side: THREE.DoubleSide }));
-    /* ★蓋（renderOrder 3）より**後**に描く。three.js の clipping の例と同じ順。
-       ⚠️ 先に描くと蓋が上に乗って全部隠れる */
-    mesh.renderOrder = 6;
-    g.add(mesh);
+  /* ★occt の attributes は three.js に**そのまま渡せる形**（README のとおり）*/
+  const stat = { tri: 0, vtx: 0 };
+  /* 🔴 **組立の階層を捨てない。**（2026-08-24）
+     occt は `result.root` に `{name, meshes, children}` の木を返す。
+     これまでは `result.meshes` を平らに回していたので、
+     **どの部品がどのサブ組立に属すか**が分からなくなっていた。
+     ⚠️ `root` が無い版でも動くように、平らな読み方も残す。 */
+  let g;
+  if (result.root) {
+    g = nodeToGroup(result.root, result, stat);
+    log('組立の階層を読みました　節点 ' + countNodes(g) + ' 個', 'ok');
+  } else {
+    g = new THREE.Group(); g.name = 'モデル';
+    for (const m of result.meshes) g.add(meshOf(m, stat));
+    log('⚠️ この版の occt は階層を返しません（平らに読みました）', 'wa');
   }
+  const tri = stat.tri, vtx = stat.vtx;
   if (model) scene.remove(model);
   scene.add(g); model = g; fit();
   document.getElementById('fit').disabled = false;
   /* ★道具を出す（読むまでは押せないボタンを並べない）*/
   document.getElementById('tools').style.display = '';
+  document.getElementById('treebtn').style.display = '';
+  treeShow(true);
   secOn = false; secFlip = false;
   document.getElementById('secpos').value = 500;
   document.getElementById('secflip').classList.remove('on');
@@ -448,7 +473,10 @@ function secBuild(){
     cap.onAfterRender = function(r){ r.clearStencil(); };
     scene.add(cap);
 
-    secParts.push({ group: g, cap: cap });
+    /* ★もとの部品も覚える。⚠️ 蓋はモデルの外に置いているので、
+       部品を隠しても**蓋だけ残る**（ツリーで消したのに切り口が浮く）。
+       だから `secApply` で「その部品が見えているか」を見て蓋を消す。 */
+    secParts.push({ group: g, cap: cap, src: set });
   });
 
   /* ★モデル本体は**全部の蓋より後**に描く（先に描くと蓋に隠れる）*/
@@ -480,9 +508,15 @@ function secApply(){
     o.material.needsUpdate = true;
   }});
   secParts.forEach(p => {
-    p.group.visible = secOn;
-    p.cap.visible = secOn;
-    if (!secOn) return;
+    /* ★その部品が（先祖まで含めて）見えているか */
+    const vis = p.src.some(o => {
+      let q = o;
+      while (q && q !== scene) { if (!q.visible) return false; q = q.parent; }
+      return true;
+    });
+    p.group.visible = secOn && vis;
+    p.cap.visible = secOn && vis;
+    if (!secOn || !vis) return;
     /* 蓋を面に合わせる */
     p.cap.position.copy(pt);
     p.cap.lookAt(pt.clone().add(nrm));
@@ -536,6 +570,150 @@ document.getElementById('secflip').addEventListener('click', () => {
   secFlip = !secFlip;
   document.getElementById('secflip').classList.toggle('on', secFlip);
   secApply();
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+   組立の階層（ASSY）
+   ══════════════════════════════════════════════════════════════════════
+   ★occt の `root` は `{name, meshes:[インデックス], children:[...]}`。
+   ⚠️ **頂点はすでにワールド座標**なので、`Group` に変換を載せない
+      （載せると二重に動く）。木は「まとめ方・名前・表示の入り切り」に使う。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** 1つのメッシュを作る */
+function meshOf(m, stat){
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
+  if (m.attributes.normal)
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
+  geo.setIndex(new THREE.Uint32BufferAttribute(m.index.array, 1));
+  if (!m.attributes.normal) geo.computeVertexNormals();
+  if (stat) {
+    stat.vtx += m.attributes.position.array.length / 3;
+    stat.tri += m.index.array.length / 3;
+  }
+  const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2])
+                      : new THREE.Color(0x9fb4cc);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: col, metalness: .15, roughness: .62, side: THREE.DoubleSide }));
+  mesh.name = m.name || '';
+  /* ★蓋より後に描く（順は `secBuild` が読み直したときに入れ直す）*/
+  mesh.renderOrder = 6;
+  return mesh;
+}
+
+/** occt の節点 → THREE.Group（名前を保つ）*/
+function nodeToGroup(node, result, stat){
+  const g = new THREE.Group();
+  g.name = node.name || '(名前なし)';
+  (node.meshes || []).forEach(i => {
+    const m = result.meshes[i];
+    if (m) g.add(meshOf(m, stat));
+  });
+  (node.children || []).forEach(ch => g.add(nodeToGroup(ch, result, stat)));
+  return g;
+}
+
+function countNodes(o){
+  let k = 0;
+  o.traverse(x => { if (x.isGroup) k++; });
+  return k;
+}
+
+/* ── 部品ツリーの画面 ── */
+let treeOpen = false;
+
+/** 三角形の数を数える（重さの目安を出す）*/
+function triOf(o){
+  let t = 0;
+  o.traverse(x => {
+    if (x.isMesh && x.geometry && x.geometry.index) t += x.geometry.index.count / 3;
+  });
+  return t;
+}
+
+function treeRender(){
+  const box = document.getElementById('treel');
+  if (!box || !model) return;
+  const rows = [];
+  /* ★折りたたみは節点に持たせる（描き直しても畳んだ状態が残る）*/
+  (function walk(o, depth){
+    if (!o.isGroup && !o.isMesh) return;
+    /* ★**葉はまとめる。** occt は「部品」も Group で返し、その下に名前のない
+       Mesh が1つ入る。両方を行にすると**部品ごとに2行**出て読めない。
+       ⇒ 子が Mesh だけの Group は**葉として1行**にし、下に降りない。 */
+    const grpKids = o.children.filter(c => c.isGroup);
+    const meshKids = o.children.filter(c => c.isMesh);
+    const leaf = o.isMesh || grpKids.length === 0;
+    const nm = o.name || (o.isMesh ? '(部品)' : '(名前なし)');
+    if (o._tclosed === undefined) o._tclosed = depth >= 3;   /* 深い所は畳んでおく */
+    rows.push({ o: o, depth: depth, kids: leaf ? 0 : grpKids.length,
+                name: nm, tri: triOf(o),
+                /* ★葉に入っている部品の数（1個なら出さない）*/
+                nm2: (leaf && meshKids.length > 1) ? meshKids.length : 0 });
+    if (!leaf && !o._tclosed) grpKids.forEach(c => walk(c, depth + 1));
+  })(model, 0);
+
+  box.innerHTML = rows.map((r, i) =>
+    '<div class="tr' + (r.o.visible ? '' : ' dim') + '" data-i="' + i + '">' +
+      '<span class="tw" data-a="t">' + (r.kids ? (r.o._tclosed ? '▸' : '▾') : '') + '</span>' +
+      '<span class="te" data-a="v">' + (r.o.visible ? '👁' : '—') + '</span>' +
+      '<span class="tn" style="padding-left:' + (r.depth * 10) + 'px" data-a="i">' +
+        esc(r.name) + '</span>' +
+      '<span class="tc">' + (r.nm2 ? r.nm2 + '個 / ' : '') +
+        (r.tri ? Math.round(r.tri).toLocaleString() : '') + '</span>' +
+    '</div>').join('');
+  box._rows = rows;
+}
+
+/** HTML に出す前に危ない字を落とす（STEP の名前は人が付けている）*/
+function esc(t){
+  return String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function treeShow(on){
+  treeOpen = !!on;
+  document.getElementById('tree').style.display = treeOpen ? 'flex' : 'none';
+  if (treeOpen) treeRender();
+}
+
+document.getElementById('treebtn').addEventListener('click', () => treeShow(!treeOpen));
+document.getElementById('trclose').addEventListener('click', () => treeShow(false));
+document.getElementById('trall').addEventListener('click', () => {
+  if (!model) return;
+  model.traverse(o => { o.visible = true; o._iso = false; });
+  treeRender();
+  secApply();
+});
+document.getElementById('treel').addEventListener('click', ev => {
+  const row = ev.target.closest ? ev.target.closest('.tr') : null;
+  const box = document.getElementById('treel');
+  if (!row || !box._rows) return;
+  const r = box._rows[Number(row.getAttribute('data-i'))];
+  if (!r) return;
+  const act = (ev.target.getAttribute && ev.target.getAttribute('data-a')) || 'i';
+  if (act === 't') { r.o._tclosed = !r.o._tclosed; treeRender(); return; }
+  if (act === 'v') {
+    r.o.visible = !r.o.visible;
+    treeRender();
+    secApply();                 /* ★隠した部品の蓋も消す */
+    return;
+  }
+  /* ★名前を押したら**その部品だけ表示**（isolate）。もう一度押すと全部戻す */
+  const only = !r.o._iso;
+  model.traverse(o => { o.visible = !only; o._iso = false; });
+  if (only) {
+    r.o.traverse(o => { o.visible = true; });
+    /* ★先祖も見えないと描かれない */
+    let q = r.o;
+    while (q) { q.visible = true; q = q.parent === scene ? null : q.parent; }
+    r.o._iso = true;
+    log('「' + r.name + '」だけ表示しています（もう一度押すか「全部表示」で戻ります）');
+  }
+  treeRender();
+  secApply();                   /* ★isolate でも蓋を合わせ直す */
 });
 
 /** 読める形か。★accept で絞れないので**ここで**見る（拡張子だけが手掛かり）*/
@@ -896,6 +1074,9 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
                          parts: secParts, merged: secMerged,
                          capColors: secParts.map(p => '#' + p.cap.material.color.getHexString()) }; },
     viewTo, spin, secApply, secBuild, bbox,
+    /* ★階層の読み込みもローカルで測れるように出す（STEP を用意しなくても
+       `nodeToGroup` に occt と同じ形の入れ物を渡せば確かめられる）*/
+    nodeToGroup, meshOf, treeRender, treeShow, triOf, countNodes,
     /** 試すモデルを入れる（STEP の代わり）*/
     setModel(g) {
       if (model) scene.remove(model);

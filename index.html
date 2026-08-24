@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824f</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824g</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -231,7 +231,8 @@ a{color:var(--accent-hi)}
     <div class="tl" id="treel"></div>
   </div>
   <div id="ph"><b>STEP を選んでください</b>
-    <span><code style="font-family:var(--mono)">.stp .step .igs .iges</code> が読めます。<br>
+    <span><code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code> が読めます。<br>
+      ★<b>大きい組立は GLB にしてから</b>お持ちください（STEP は 800MB あたりが限界です）。<br>
       iPhone は「ファイル」アプリから選びます（Drive・OneDrive どちらでも）。<br>
       ファイルはこの端末から出ません（このページはサーバに何も送りません）</span></div>
 </main>
@@ -269,6 +270,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 /* ★GLB で書き出すため。⚠️ 出るのは**三角形**（B-rep は入らない）*/
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+/* 🔴 **GLB / glTF を読むため。** これが無いと、CAD 側で GLB にしても開けない
+   （2GB 級の STEP はブラウザで読めないので、GLB にして開くのが唯一の道）*/
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
 const logEl = document.getElementById('log');
@@ -357,7 +362,8 @@ function driveOut(id, why){
   var ph = document.getElementById('ph');
   ph.innerHTML = '<b>このページでは開けません</b><span>' + why +
     '<br><a class="drvout" href="' + u + '" target="_blank" rel="noopener">Drive で開く</a>' +
-    '<br>回せるのは <code style="font-family:var(--mono)">.stp .step .igs .iges</code> です</span>';
+    '<br>回せるのは <code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code>' +
+    ' です</span>';
   ph.style.display = '';
 }
 const mb = n => (n / 1048576).toFixed(1) + ' MB';
@@ -462,6 +468,17 @@ let busy = false;
  * ⚠️ 実装を2つ持たない（片方だけ直す事故を作らない）。
  */
 async function draw(buf, kind, tAll){
+  /* ★GLB / glTF は occt を通さない（変換が要らない。だから速い・大きいものが入る）*/
+  if (kind === 'gltf') {
+    let r;
+    try { r = await drawGltf(buf, tAll); }
+    catch (e) {
+      log('✗ GLB として読めませんでした（' + String(e && e.message || e) + '）', 'ng');
+      return;
+    }
+    finishModel(r.group, tAll, r.tri);
+    return;
+  }
   const occt = await loadOcct();
   log('変換中…（大きいファイルはここで画面が止まります）');
   await new Promise(r => setTimeout(r, 40));      /* 上の行を描かせてから重い処理へ */
@@ -488,6 +505,16 @@ async function draw(buf, kind, tAll){
     log('⚠️ この版の occt は階層を返しません（平らに読みました）', 'wa');
   }
   const tri = stat.tri, vtx = stat.vtx;
+  finishModel(g, tAll, tri);
+  log('三角形 ' + tri.toLocaleString() + '　頂点 ' + vtx.toLocaleString());
+}
+
+/**
+ * 読み終わったモデルを場に置いて、道具を整える。
+ * 🔴 **STEP でも GLB でも同じ1本を通す。** 2つ書くと片方だけ直す事故が起きる
+ *    （実際に「読み込みで落ちる」を1か所だけ直して踏んだ）。
+ */
+function finishModel(g, tAll, tri){
   if (model) scene.remove(model);
   scene.add(g); model = g; fit();
   document.getElementById('fit').disabled = false;
@@ -506,7 +533,6 @@ async function draw(buf, kind, tAll){
      ★状態は**変数側**（`secPosVal` など）で持ち、段は `secSync` が合わせる。 */
   secOn = false; secFlip = false; secPosVal = 500;
   secBuild(); secSync(); secApply();
-  log('三角形 ' + tri.toLocaleString() + '　頂点 ' + vtx.toLocaleString());
   log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');
   if (tri > 2000000) log('⚠️ 三角形が200万超。スマホでは重いはずです', 'wa');
 }
@@ -1451,8 +1477,9 @@ function explBuild(){
   const leaves = [];
   (function walk(o){
     if (o.isMesh && o.parent === model) { leaves.push(o); return; }
-    if (!o.isGroup) return;
-    const g = o.children.filter(c => c.isGroup);
+    /* ⚠️ GLB は素の `Object3D` なので `isGroup` では拾えない（`isCont` を使う）*/
+    if (!isCont(o)) return;
+    const g = o.children.filter(isCont);
     if (o !== model && g.length === 0) { leaves.push(o); return; }
     o.children.forEach(walk);
   })(model);
@@ -1597,6 +1624,21 @@ function exportGlb(){
   function fin(){ if (b2) { b2.disabled = false; b2.textContent = 'GLB で書き出す'; } }
   if (explVal > 0)
     log('⚠️ 分解しています（' + explVal + '%）。**離れたまま**書き出されます', 'wa');
+  /* 🔴 **書き出す前にメッシュへ名前を移す。**
+     occt はメッシュに名前を付けず、名前は**親の Group**（部品）が持っている。
+     `GLTFExporter` は名前の無いメッシュを `mesh_0` にしてしまい、
+     さらに中身が1つだけの Group を畳むので、**部品名が全部消える**
+     （2026-08-24 に往復テストで捕まえた。`PLATE`/`SHAFT` → `mesh_0`/`mesh_1`）。
+     ⇒ 名前が空のメッシュに**一番近い親の名前**を移しておく。
+     ⚠️ 名前を付けるだけなので、画面の見え方は変わらない。 */
+  let named = 0;
+  model.traverse(o => {
+    if (!o.isMesh || o.name) return;
+    let q = o.parent, nm = '';
+    while (q && q !== scene) { if (q.name) { nm = q.name; break; } q = q.parent; }
+    if (nm) { o.name = nm; named++; }
+  });
+  if (named) log('　（部品名を ' + named + '件 メッシュへ写しました。GLB で名前が残ります）');
   log('GLB を作っています…（三角形 ' + Math.round(triOf(model)).toLocaleString() + '）');
   try {
     new GLTFExporter().parse(model, buf => {
@@ -1690,9 +1732,24 @@ function nodeToGroup(node, result, stat){
   return g;
 }
 
+/**
+ * **入れ物（部品のまとまり）か。**
+ * 🔴 `isGroup` だけで見てはいけない。
+ *    - occt から作った木は `THREE.Group`（＝`isGroup` が真）
+ *    - **`GLTFLoader` は素の `Object3D` を作る**（＝`isGroup` は**偽**）
+ *    ⇒ `isGroup` で歩くと **GLB は1段目で止まり、部品ツリーが1行に潰れる**
+ *      （2026-08-24、往復テストで捕まえた）。
+ * ⚠️ 線（エッジ強調）は `model` の外（`scene` 直下の別 Group）に置いているので
+ *    ここには来ないが、将来入っても弾けるように**除いておく**。
+ */
+function isCont(o){
+  return !!(o && o.isObject3D && !o.isMesh && !o.isLine && !o.isPoints &&
+            !o.isSprite && !o.isLight && !o.isCamera);
+}
+
 function countNodes(o){
   let k = 0;
-  o.traverse(x => { if (x.isGroup) k++; });
+  o.traverse(x => { if (isCont(x)) k++; });
   return k;
 }
 
@@ -1714,20 +1771,29 @@ function treeRender(){
   const rows = [];
   /* ★折りたたみは節点に持たせる（描き直しても畳んだ状態が残る）*/
   (function walk(o, depth){
-    if (!o.isGroup && !o.isMesh) return;
+    if (!isCont(o) && !o.isMesh) return;
     /* ★**葉はまとめる。** occt は「部品」も Group で返し、その下に名前のない
        Mesh が1つ入る。両方を行にすると**部品ごとに2行**出て読めない。
        ⇒ 子が Mesh だけの Group は**葉として1行**にし、下に降りない。 */
-    const grpKids = o.children.filter(c => c.isGroup);
+    const grpKids = o.children.filter(isCont);
     const meshKids = o.children.filter(c => c.isMesh);
-    const leaf = o.isMesh || grpKids.length === 0;
+    /* ★名前を持つメッシュは**それ自体が部品**として行に出す。
+       ⚠️ 以前は「子が Group でなければ葉」としていた。occt は
+          「部品の Group ＋ 名前の無いメッシュ1つ」で返すのでそれで合っていたが、
+          **GLB は平らで、名前はメッシュが持つ**ことがある。その場合
+          **全体が1行に潰れて部品が見えなくなる**（2026-08-24 に往復テストで捕まえた）。
+       ⇒ 葉と見なすのは「Group の子が無く、かつ**名前付きのメッシュが1つ以下**」のとき。 */
+    const namedMesh = meshKids.filter(c => c.name);
+    const leaf = o.isMesh || (grpKids.length === 0 && namedMesh.length <= 1);
     const nm = o.name || (o.isMesh ? '(部品)' : '(名前なし)');
     if (o._tclosed === undefined) o._tclosed = depth >= 3;   /* 深い所は畳んでおく */
-    rows.push({ o: o, depth: depth, kids: leaf ? 0 : grpKids.length,
+    rows.push({ o: o, depth: depth, kids: leaf ? 0 : (grpKids.length + namedMesh.length),
                 name: nm, tri: triOf(o),
                 /* ★葉に入っている部品の数（1個なら出さない）*/
                 nm2: (leaf && meshKids.length > 1) ? meshKids.length : 0 });
-    if (!leaf && !o._tclosed) grpKids.forEach(c => walk(c, depth + 1));
+    /* ★降りる先は Group と**名前付きのメッシュ**（GLB の平らな形に対応）*/
+    if (!leaf && !o._tclosed)
+      grpKids.concat(namedMesh).forEach(c => walk(c, depth + 1));
   })(model, 0);
 
   box.innerHTML = rows.map((r, i) =>
@@ -1844,8 +1910,83 @@ function sizeGate(bytes, name){
   return true;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   GLB / glTF を読む
+   ══════════════════════════════════════════════════════════════════════
+   ★STEP は occt（WASM）で**毎回変換**して読む。GLB は**変換済み**なので
+     `GLTFLoader` でそのまま読める（速い・大きいものが入る）。
+   ⚠️ **Draco 圧縮**も読めるようにする（サイズの効果が大きいのはこれ）。
+      解読部品は CDN から。⚠️ 圧縮されていないファイルでも害はない。
+   ⚠️ **GLB の材料は片面**なので、断面で切ると中が透ける。**両面に直す。**
+   ⚠️ **GLB は節点に変換を持つ**（occt はワールド座標）。断面のステンシルは
+      `matrixWorld` を写しているので**そのままで合う**。
+   ══════════════════════════════════════════════════════════════════════ */
+let gltfLoader = null;
+function getGltfLoader(){
+  if (gltfLoader) return gltfLoader;
+  const l = new GLTFLoader();
+  const d = new DRACOLoader();
+  /* ★解読部品は three と同じ版から取る（版がずれると読めないことがある）*/
+  d.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/libs/draco/');
+  l.setDRACOLoader(d);
+  gltfLoader = l;
+  return l;
+}
+
+/** GLB / glTF を描く。★`draw` から呼ぶ（描く先は STEP と同じ1本）*/
+function drawGltf(buf, tAll){
+  return new Promise((res, rej) => {
+    const t1 = performance.now();
+    log('GLB を読み込み中…（変換は要りません）');
+    /* ⚠️ `parse` は ArrayBuffer を取る。`Uint8Array` を渡すと読めない */
+    const ab = (buf.buffer && buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength)
+      ? buf.buffer
+      : new Uint8Array(buf).slice().buffer;
+    getGltfLoader().parse(ab, '', gltf => {
+      try {
+        let g = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+        if (!g) { rej(new Error('中身が空でした')); return; }
+        /* ★`GLTFExporter` は場面を1枚被せる（既定の名前が `AuxScene`）。
+           そのままだと部品ツリーの一番上に**意味のない行**が出るので、
+           **中身が1つだけの被せ物は外す**。
+           ⚠️ 外すと入れ物の変換が消えるので、**単位行列のときだけ**外す
+              （glTF の場面は変換を持たない決まりなので普通はここを通る）。 */
+        for (let i = 0; i < 4; i++) {
+          const kid = g.children.length === 1 ? g.children[0] : null;
+          if (!kid || kid.isMesh || !kid.isObject3D) break;
+          g.updateMatrix();
+          if (!g.matrix.equals(new THREE.Matrix4())) break;
+          g.remove(kid);
+          g = kid;
+        }
+        let tri = 0, vtx = 0;
+        g.traverse(o => {
+          if (!o.isMesh) return;
+          /* ⚠️ **両面にする。** 片面だと断面で切ったとき中が透ける
+             （STEP から作ったときと見え方を揃える）*/
+          const ms = Array.isArray(o.material) ? o.material : [o.material];
+          ms.forEach(m => { if (m) { m.side = THREE.DoubleSide; m.needsUpdate = true; } });
+          if (o.geometry) {
+            const idx = o.geometry.index, pos = o.geometry.attributes.position;
+            tri += idx ? idx.count / 3 : (pos ? pos.count / 3 : 0);
+            vtx += pos ? pos.count : 0;
+            /* ★蓋より後に描く（`secBuild` が入れ直すが、初回のために）*/
+            o.renderOrder = 6;
+          }
+        });
+        log('✓ 読み込み完了　' + sec(performance.now() - t1), 'ok');
+        log('三角形 ' + Math.round(tri).toLocaleString() +
+            '　頂点 ' + Math.round(vtx).toLocaleString());
+        res({ group: g, tri: tri, vtx: vtx });
+      } catch (e) { rej(e); }
+    }, err => rej(err instanceof Error ? err : new Error(String(err && err.message || err))));
+  });
+}
+
 /** 読める形か。★accept で絞れないので**ここで**見る（拡張子だけが手掛かり）*/
 function kindOf(name){
+  /* ★GLB / glTF は**変換済み**なので occt を通さない（`'gltf'` を返す）*/
+  if (/\.(glb|gltf)$/i.test(String(name || '').trim())) return 'gltf';
   const n = String(name || '').toLowerCase();
   if (/\.(stp|step)$/.test(n)) return 'step';
   if (/\.(igs|iges)$/.test(n)) return 'iges';
@@ -2218,6 +2359,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
        `nodeToGroup` に occt と同じ形の入れ物を渡せば確かめられる）*/
     nodeToGroup, meshOf, treeRender, treeShow, triOf, countNodes,
     cubeHit, cubeDraw, cubeMesh, cubeScene, cubeCam, mPick,
+    draw, kindOf, drawGltf, finishModel,   /* ★GLB の往復を測るため */
     /** 試すモデルを入れる（STEP の代わり）*/
     setModel(g) {
       if (model) scene.remove(model);

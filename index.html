@@ -49,10 +49,23 @@
    ★つまみは細く・丸く・地に馴染む色。**触ると少し明るくする**（掴めると分かる）。 */
 ::-webkit-scrollbar{width:10px;height:10px;}
 ::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:#26314e;border-radius:999px;
-  border:2px solid transparent;background-clip:content-box;}
-::-webkit-scrollbar-thumb:hover{background:#3a4c78;background-clip:content-box;}
-::-webkit-scrollbar-thumb:active{background:#4b6396;background-clip:content-box;}
+::-webkit-scrollbar-thumb{background:#2c3a5e;border-radius:999px;
+  border:3px solid transparent;background-clip:content-box;
+  /* 🔴 **長さ（高さ）はブラウザが決める**（内容と表示の比）。CSS では変えられない。
+     ★ただし**下限**は付けられる。短い所でも細い棒にならず掴める。 */
+  min-height:36px;}
+::-webkit-scrollbar:horizontal{}
+::-webkit-scrollbar-thumb:horizontal{min-width:36px;min-height:0;}
+/* ★入れ物にマウスが乗ったら**太くなる**（本人の要望「近づいたらアクション」）。
+   🔴 **枠（透明）を細めるだけ**なので、**場所は動かない**（内容がずれない）。
+   ⚠️ Chromium はスクロールバーの疑似要素を**アニメーションしない**ので、
+      じわっとではなく**ぱっと**切り替わる。そこは望みどおりにできない。 */
+:hover::-webkit-scrollbar-thumb{border-width:1px;background:#33436b;
+  background-clip:content-box;}
+::-webkit-scrollbar-thumb:hover{background:#4a5f96;border-width:1px;
+  background-clip:content-box;}
+::-webkit-scrollbar-thumb:active{background:#5d76b4;border-width:1px;
+  background-clip:content-box;}
 /* ⚠️ 縦と横が交わる角。既定だと**白い四角**が出る */
 ::-webkit-scrollbar-corner{background:transparent;}
 /* ★上下の矢印は出さない（暗い画面では目障り）*/
@@ -142,17 +155,10 @@ footer .hd .sp{flex:1;}
 footer .hd button{padding:1px 8px;font-size:13px;}
 /* ログ本体だけがスクロールする。★高さは変数で持つ（1か所で決める）*/
 #log{height:var(--fh);overflow:auto;flex:none;}
-/* ★地が濃い所はつまみを少し明るくする（同じ色だと見えない）*/
-#log::-webkit-scrollbar-thumb,
-#tree .tl::-webkit-scrollbar-thumb,
-#bom .bl::-webkit-scrollbar-thumb,
-#ph .cutl::-webkit-scrollbar-thumb,
-#bom textarea::-webkit-scrollbar-thumb{background:#2f3d61;background-clip:content-box;}
-#log::-webkit-scrollbar-thumb:hover,
-#tree .tl::-webkit-scrollbar-thumb:hover,
-#bom .bl::-webkit-scrollbar-thumb:hover,
-#ph .cutl::-webkit-scrollbar-thumb:hover,
-#bom textarea::-webkit-scrollbar-thumb:hover{background:#44598c;background-clip:content-box;}
+/* ★部品ごとの色の上書きはやめた。
+   ⚠️ `#log::-webkit-scrollbar-thumb` は id を含むので**より強く**、
+      「入れ物に乗ったら明るくする」規則を打ち消していた。
+   ⇒ 全体の1組だけにして、地の濃い所でも見える明るさにした。 */
 footer.fold #log{display:none;}
 footer.fold{--fh:0px;}
 .hd{font-size:13.5px;color:var(--ink2)}
@@ -165,7 +171,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825k</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0825m</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には

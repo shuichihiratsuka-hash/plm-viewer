@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824r</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824t</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -241,6 +241,11 @@ a{color:var(--accent-hi)}
   background:rgba(8,13,24,.85);border:1px solid #35507e;color:#dbe6fb;}
 #snaptag.cor{border-color:#ffd23f;color:#ffe79a;}
 #snaptag.edg{border-color:#35d7f5;color:#bdf0fb;}
+/* ★途中の値（まだ確定していない）。★確定した青いバルーンと見分ける */
+#mlive{position:absolute;pointer-events:none;transform:translate(-50%,-50%);
+  font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;
+  padding:2px 7px;border-radius:9px;white-space:nowrap;
+  background:rgba(8,20,34,.9);border:1px dashed #9fe4ff;color:#d7f3ff;}
 </style>
 <main>
   <canvas id="cv"></canvas>
@@ -524,6 +529,9 @@ var cubeReady = false;      /* ★ViewCube の用意ができたか */
 var measReady = false;      /* ★計測の用意ができたか */
 (function loop(){
   controls.update();
+  /* ★計測の線をカメラ側へごくわずか寄せる（奥行きの取り合いを避ける）。
+     ⚠️ **描く前**でないと意味が無い。 */
+  if (measReady) mNudge();
   renderer.render(scene, camera);
   /* ★右上の向きの箱。⚠️ **本体を描いたあと**に一角へ描く */
   if (cubeReady) cubeDraw();
@@ -1301,7 +1309,9 @@ function navSet(t){
   /* ⚠️ 「計測」から離れたら**拾うのをやめる**（別の道具を選んだのに点が増える）*/
   if (navTool !== 'meas') {
     mTool = null; mPend = []; mFacePend = []; mLinePend = null;
+    mPendClear();
     if (snapMark) snapShow(null);          /* ★吸い付きの印も消す */
+    hlShow(null, 0, '');                   /* ★光りも消す */
   }
   mCursor();
   const opt = document.getElementById('opt');
@@ -1358,6 +1368,7 @@ document.getElementById('opt').addEventListener('click', ev => {
     const v = b.getAttribute('data-m');
     mTool = (mTool === v) ? null : v;
     mPend = []; mFacePend = []; mLinePend = null;
+    mPendClear();                          /* ★途中の印を片付ける */
     mCursor();                             /* ★十字にする／戻す */
     document.querySelectorAll('#opt .mt').forEach(x =>
       x.classList.toggle('on', x.getAttribute('data-m') === mTool));
@@ -2147,12 +2158,20 @@ function mPick(ev){
         if (!near3d(foot, SNAP_E)) continue;         /* ★3D でも近いこと */
         bed = d; be = foot; bk = k;
       }
-      if (bv && bd < SNAP_V * SNAP_V)
-        return { p: bv, snap: '稜線の点',
-                 line: bk >= 0 ? growLine(h.object, bnd, bk) : null };
-      if (be && bed < SNAP_E * SNAP_E)
-        return { p: be, snap: '稜線',
-                 line: bk >= 0 ? growLine(h.object, bnd, bk) : null };
+      /* 🔴 **カーソルから一番近いものを選ぶ**（本人の指示）。
+         ⚠️ 以前は「角を先に見て、届いていれば角」だったので、
+            **稜線が 2px の所にあっても角が 18px なら角**に付いていた。
+         ★ただし**同じくらいなら角**（4px ぶんおまけ）。角は測る基準になりやすい。 */
+      const okV = bv && bd < SNAP_V * SNAP_V;
+      const okE = be && bed < SNAP_E * SNAP_E;
+      const line = () => (bk >= 0 ? growLine(h.object, bnd, bk) : null);
+      if (okV && okE) {
+        return (Math.sqrt(bd) - 4 <= Math.sqrt(bed))
+          ? { p: bv, snap: '稜線の点', line: line() }
+          : { p: be, snap: '稜線', line: line() };
+      }
+      if (okV) return { p: bv, snap: '稜線の点', line: line() };
+      if (okE) return { p: be, snap: '稜線', line: line() };
     } else {
       /* ⚠️ 元の面が分からない（GLB など）→ **三角形の頂点だけ**に吸う。
          ★「およそ」と付けて返す（本物の角とは限らない）。 */
@@ -2207,24 +2226,75 @@ function mCircle(c, ax, rad){
   }
   const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
     new THREE.LineBasicMaterial({ color: 0x11a37f }));
-  l.renderOrder = 999; l.material.depthTest = false;
-  scene.add(l); return l;
+  l.renderOrder = 999;
+  const pair = depthPair(l);
+  scene.add(pair); return pair;
+}
+
+/**
+ * 🔴 **見えている所は濃く、隠れている所は薄く。**
+ *    ⚠️ 計測の線・点を全部「必ず手前」で描いていたので、モデルの内側を通る線も
+ *       はっきり出て**浮いて見えていた**（本人の指摘）。
+ * ★2回描いて重ねる（製図の隠線と同じ考え方）
+ *   ・濃い方：`depthTest = true`  → **見えている所だけ**
+ *   ・薄い方：`depthTest = false` → **隠れている所も**うっすら
+ * ⚠️ 薄い方は `depthWrite = false`（濃い方を邪魔しない）。
+ * @param {THREE.Object3D} o 元の（濃い方に使う）もの
+ * @returns {THREE.Group} 場に足すもの
+ */
+const mFadeList = [];
+function depthPair(o){
+  const g = new THREE.Group();
+  o.material.depthTest = true;
+  o.material.transparent = false;
+  o.material.opacity = 1;
+  o.material.needsUpdate = true;
+  const faint = o.clone();
+  faint.material = o.material.clone();
+  faint.material.depthTest = false;
+  faint.material.depthWrite = false;
+  faint.material.transparent = true;
+  faint.material.opacity = 0.22;
+  faint.material.needsUpdate = true;
+  faint.renderOrder = (o.renderOrder || 0) - 1;
+  g.add(faint, o);                          /* ★薄い方を先に、濃い方を後に */
+  mFadeList.push(g);
+  return g;
+}
+
+/**
+ * 奥行きの取り合いを避ける。★毎フレーム**カメラ側へごくわずか**寄せる。
+ * ⚠️ 面の上に乗っている線は、これをやらないと点線のようにちらつく。
+ */
+const mFadeDir = new THREE.Vector3();
+function mNudge(){
+  if (!mFadeList.length) return;
+  const b = bbox();
+  const e = (b ? b.r : 50) * 8e-4;
+  camera.getWorldDirection(mFadeDir);
+  for (let i = mFadeList.length - 1; i >= 0; i--) {
+    const g = mFadeList[i];
+    if (!g.parent) { mFadeList.splice(i, 1); continue; }   /* 消えたものは外す */
+    g.position.copy(mFadeDir).multiplyScalar(-e);
+  }
 }
 
 function mLine(a, b2){
   const g = new THREE.BufferGeometry().setFromPoints([a, b2]);
   const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x2f6fe0 }));
-  l.renderOrder = 999; l.material.depthTest = false;
-  scene.add(l); return l;
+  l.renderOrder = 999;
+  const pair = depthPair(l);
+  scene.add(pair); return pair;
 }
 function mDot(pt){
   const b2 = bbox();
   const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8),
     new THREE.MeshBasicMaterial({ color: bgWhite ? 0x0a3f7a : 0xffffff }));
-  m.material.depthTest = false; m.renderOrder = 1000;
+  m.renderOrder = 1000;
   m.scale.setScalar((b2 ? b2.r : 50) * 0.012);
   m.position.copy(pt);
-  scene.add(m); return m;
+  const pair = depthPair(m);
+  scene.add(pair); return pair;
 }
 
 function mAdd(kind, pts){
@@ -2356,6 +2426,8 @@ function mUndo(){
 }
 function mClear(){
   if (snapMark) snapShow(null);
+  hlShow(null, 0, '');
+  mPendClear();
   mItems.forEach(it => { it.objs.forEach(o => scene.remove(o)); mDropLabel(it); });
   mItems = []; mPend = []; mFacePend = []; mLinePend = null;
   mLabels();
@@ -2383,7 +2455,9 @@ function mHint(){
            '（★断面で現れた面の幅や板厚に向きます）',
     thick: '板の**平らな面**を1回押してください（裏側までの厚みを測ります）',
     dia: '穴や丸軸の**曲がった面**を1回押してください（直径が出ます）',
-    fdist: '**平らな面を2つ**押してください（平行なら垂直距離）',
+    fdist: '**平らな面を2つ**押してください（平行なら垂直距離）。' +
+           '★**表側を押して回して裏側**——これで板厚が正しく出ます' +
+           '（2点の距離だと斜めの長さになります）',
     fang: '**平らな面を2つ**押してください（なす角が出ます）'
   };
   log(H[mTool] || '');
@@ -2397,6 +2471,145 @@ function mHint(){
    ⚠️ 毎回の pointermove で光線を飛ばすと重い ⇒ **1フレームに1回**に間引く。
    ══════════════════════════════════════════════════════════════════ */
 let snapMark = null, snapTag = null, snapPend = null, snapBusy = false;
+/**
+ * 🔴 **1点目からカーソルまで線を伸ばし、途中の値を出す**（本人の指示）。
+ * ★「押す前に値が見える」ので、狙いを付け直せる。
+ * ⚠️ 相手の面の当てはめが要るもの（∠面の角度）は重いので出さない。
+ */
+let rubLine = null, rubLab = null;
+
+/* ══════════════════════════════════════════════════════════════════
+   吸い付いている要素そのものを光らせる
+   ══════════════════════════════════════════════════════════════════
+   ⚠️ **毎フレーム作り直さない。** 同じものを指している間は何もしない
+      （面の外周は数千本になり得るので、ここを手を抜くと重くなる）。
+   ══════════════════════════════════════════════════════════════════ */
+let hlSeg = null, hlKey = '';
+function hlShow(pts, col, key){
+  if (key === hlKey) return;               /* ★同じものなら作り直さない */
+  hlKey = key;
+  if (hlSeg) { scene.remove(hlSeg); hlSeg = null; }
+  if (!pts || !pts.length) return;
+  /* ⚠️ **WebGL では線の太さ（`linewidth`）が効かない**（ほぼ常に1画素）。
+     ★代わりに**少しずらして2本重ねる**と太く見える。
+       ずらす量はモデルの大きさに比例させる（近寄っても離れても効く）。 */
+  const b = bbox(), e = (b ? b.r : 50) * 4e-4;
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  const core = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: col }));
+  core.renderOrder = 1180;
+  /* ★少しずらして2本重ねて太く見せる（WebGL では `linewidth` が効かない）*/
+  const g2 = g.clone();
+  const p2 = g2.attributes.position;
+  for (let i = 0; i < p2.count; i++)
+    p2.setXYZ(i, p2.getX(i) + e, p2.getY(i) + e, p2.getZ(i) + e);
+  core.add(new THREE.LineSegments(g2, core.material));
+  /* ★「見えている所は濃く、隠れている所は薄く」*/
+  hlSeg = depthPair(core);
+  scene.add(hlSeg);
+}
+
+/** どの面の上にいるか（軽い当たり判定だけ。当てはめはしない）*/
+function hoverFace(ev){
+  if (!model) return null;
+  const r = renderer.domElement.getBoundingClientRect();
+  const nd = new THREE.Vector2(
+    ((ev.clientX - r.left) / r.width) * 2 - 1,
+    -((ev.clientY - r.top) / r.height) * 2 + 1);
+  mRay.setFromCamera(nd, camera);
+  const hits = mRay.intersectObject(model, true).filter(mVisible);
+  if (!hits.length) return null;
+  const h = hits[0];
+  if (h.faceIndex === undefined || h.faceIndex === null) return null;
+  return { obj: h.object, fi: h.faceIndex };
+}
+
+/** 面の外周ぜんぶを線の点の並びにする（`LineSegments` 用に2点ずつ）*/
+function faceOutline(mesh, triIdx){
+  const bnd = faceBoundary(mesh, triIdx);
+  if (!bnd || !bnd.length) return null;
+  const pos = mesh.geometry.attributes.position;
+  const LIM = 4000;                        /* ⚠️ 巨大な面で作りすぎない */
+  const m = Math.min(bnd.length, LIM);
+  const pts = [];
+  for (let k = 0; k < m; k++) {
+    pts.push(mesh.localToWorld(new THREE.Vector3().fromBufferAttribute(pos, bnd[k][0])));
+    pts.push(mesh.localToWorld(new THREE.Vector3().fromBufferAttribute(pos, bnd[k][1])));
+  }
+  return pts;
+}
+
+/** いま「1点目まで拾っている」状態なら、その基準を返す */
+function rubBase(){
+  if (!mTool) return null;
+  if (mTool === 'dist' && mPend.length === 1) return { kind: 'p', p: mPend[0] };
+  if (mTool === 'ang' && mPend.length === 2) return { kind: 'a', p: mPend[1], q: mPend[0] };
+  if (mTool === 'ldist' && mLinePend) return { kind: 'l', a: mLinePend.a, b: mLinePend.b };
+  if (mTool === 'fdist' && mFacePend.length === 1)
+    return { kind: 'f', p: mFacePend[0].p, n: mFacePend[0].n, at: mFacePend[0].hit };
+  return null;
+}
+
+function rubShow(hit){
+  const base = hit ? rubBase() : null;
+  if (!base) {
+    if (rubLine) rubLine.visible = false;
+    if (rubLab) rubLab.style.display = 'none';
+    return;
+  }
+  /* 端と値を決める */
+  let from = null, txt = '';
+  if (base.kind === 'p') {
+    from = base.p;
+    txt = '~ ' + from.distanceTo(hit.p).toFixed(2) + ' mm';
+  } else if (base.kind === 'a') {
+    from = base.p;
+    const u = base.q.clone().sub(base.p), v = hit.p.clone().sub(base.p);
+    const d = u.length() * v.length();
+    const c = d ? Math.max(-1, Math.min(1, u.dot(v) / d)) : 1;
+    txt = '~ ' + (Math.acos(c) * 180 / Math.PI).toFixed(2) + ' °';
+  } else if (base.kind === 'l') {
+    const d = base.b.clone().sub(base.a), l2 = d.lengthSq();
+    const t = l2 > 1e-18 ? hit.p.clone().sub(base.a).dot(d) / l2 : 0;
+    from = base.a.clone().addScaledVector(d, t);           /* 垂線の足 */
+    txt = '線から ~ ' + from.distanceTo(hit.p).toFixed(2) + ' mm';
+  } else {
+    const off = hit.p.clone().sub(base.p).dot(base.n);
+    from = hit.p.clone().addScaledVector(base.n, -off);     /* 面へ落とした足 */
+    txt = '面から ~ ' + Math.abs(off).toFixed(2) + ' mm';
+  }
+  /* 線 */
+  if (!rubLine) {
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+      [new THREE.Vector3(), new THREE.Vector3()]),
+      new THREE.LineBasicMaterial({ color: 0x9fe4ff }));
+    l.renderOrder = 1150;
+    /* ★ゴムひもも「見えている所は濃く、隠れている所は薄く」*/
+    rubLine = depthPair(l);
+    rubLine.userData.core = l;
+    scene.add(rubLine);
+  }
+  rubLine.visible = true;
+  /* ⚠️ 薄い方は写しなので、**両方**の座標を動かす */
+  rubLine.children.forEach(c => {
+    const pa = c.geometry.attributes.position;
+    pa.setXYZ(0, from.x, from.y, from.z);
+    pa.setXYZ(1, hit.p.x, hit.p.y, hit.p.z);
+    pa.needsUpdate = true;
+    c.geometry.computeBoundingSphere();
+  });
+  /* 値は線の真ん中に */
+  if (!rubLab) {
+    rubLab = document.createElement('span');
+    rubLab.id = 'mlive';
+    document.getElementById('mlab').appendChild(rubLab);
+  }
+  const r = renderer.domElement.getBoundingClientRect();
+  const mid = from.clone().add(hit.p).multiplyScalar(0.5).project(camera);
+  rubLab.style.display = '';
+  rubLab.textContent = txt;
+  rubLab.style.left = Math.round((mid.x + 1) / 2 * r.width) + 'px';
+  rubLab.style.top = Math.round((-mid.y + 1) / 2 * r.height) + 'px';
+}
 
 function snapShow(hit){
   if (!snapMark) {
@@ -2409,8 +2622,13 @@ function snapShow(hit){
       new THREE.MeshBasicMaterial({ color: 0x35d7f5 }));
     const rg = new THREE.Mesh(new THREE.TorusGeometry(1, 0.16, 8, 28),
       new THREE.MeshBasicMaterial({ color: 0xc8d6ea }));
-    [sq, ci, rg].forEach(o => { o.material.depthTest = false; o.renderOrder = 1200; });
-    snapMark.add(sq, ci, rg);
+    /* ★吸い付きの印も「見えている所は濃く、隠れている所は薄く」。
+       ⚠️ 印は**必ず見えてほしい**ので、薄い方の透過は少し強めにする（0.35）。 */
+    [sq, ci, rg].forEach(o => { o.renderOrder = 1200; });
+    snapMark.add(depthPair(sq), depthPair(ci), depthPair(rg));
+    snapMark.children.forEach(g => {
+      if (g.children[0] && g.children[0].material) g.children[0].material.opacity = 0.35;
+    });
     scene.add(snapMark);
   }
   if (!snapTag) {
@@ -2428,14 +2646,16 @@ function snapShow(hit){
   const isEdge = hit.snap === '稜線';
   snapMark.visible = true;
   snapMark.position.copy(hit.p);
+  /* ⚠️ 中身は `depthPair` の Group（濃い／薄いの2枚）。**大きさは中の2枚**に当てる */
+  const setSc = (g, s) => g.children.forEach(c => c.scale.setScalar(s));
   snapMark.children[0].visible = isCorner;
   snapMark.children[1].visible = isEdge;
   snapMark.children[2].visible = !isCorner && !isEdge;      /* 面 → 輪 */
-  snapMark.children[0].scale.setScalar(sz * 0.020);
-  snapMark.children[1].scale.setScalar(sz * 0.013);
-  snapMark.children[2].scale.setScalar(sz * 0.016);
+  setSc(snapMark.children[0], sz * 0.020);
+  setSc(snapMark.children[1], sz * 0.013);
+  setSc(snapMark.children[2], sz * 0.016);
   /* ★輪はカメラの方を向かせる（斜めだと潰れて見えない）*/
-  snapMark.children[2].quaternion.copy(camera.quaternion);
+  snapMark.children[2].children.forEach(c => c.quaternion.copy(camera.quaternion));
   /* 文字はカーソルの少し右上 */
   const r = renderer.domElement.getBoundingClientRect();
   snapTag.style.display = '';
@@ -2446,7 +2666,7 @@ function snapShow(hit){
 }
 
 renderer.domElement.addEventListener('pointermove', ev => {
-  if (!mTool || M_FACE[mTool]) { if (snapMark) snapShow(null); return; }
+  if (!mTool) { if (snapMark) snapShow(null); rubShow(null); return; }
   snapPend = { clientX: ev.clientX, clientY: ev.clientY };
   if (snapBusy) return;
   snapBusy = true;
@@ -2456,10 +2676,35 @@ renderer.domElement.addEventListener('pointermove', ev => {
     if (!q) return;
     const h = mPick(q);
     if (h) { h.sx = q.clientX; h.sy = q.clientY; }
-    snapShow(h);
+    /* ★面で測る道具は「角・稜線」の印を出さない（拾うのは面なので嘘になる）*/
+    snapShow(M_FACE[mTool] ? null : h);
+    rubShow(h);                         /* ★1点目からカーソルまでの線と今の値 */
+    /* ★吸い付いている要素そのものを光らせる（本人の指示：視認性）*/
+    if (!h) { hlShow(null, 0, ''); return; }
+    if (M_FACE[mTool]) {
+      /* 面で測る道具 → **その面の外周ぜんぶ**を黄色で */
+      const f = hoverFace(q);
+      if (!f) { hlShow(null, 0, ''); return; }
+      const ud = f.obj.geometry.userData;
+      const fid = ud.faceOfTri ? ud.faceOfTri[f.fi] : -1;
+      const key = 'F' + f.obj.uuid + ':' + (fid >= 0 ? fid : 't' + f.fi);
+      if (key !== hlKey) hlShow(faceOutline(f.obj, f.fi), 0xffd23f, key);
+      return;
+    }
+    /* 点の道具 → 吸い付いている**稜線を1本**水色で */
+    if (h.line) {
+      const a = h.line.a, b2 = h.line.b;
+      const key = 'E' + [a.x, a.y, a.z, b2.x, b2.y, b2.z]
+        .map(v => Math.round(v * 100)).join('_');
+      hlShow([a, b2], 0x35d7f5, key);
+    } else hlShow(null, 0, '');
   });
 });
-renderer.domElement.addEventListener('pointerleave', () => { if (snapMark) snapShow(null); });
+renderer.domElement.addEventListener('pointerleave', () => {
+  if (snapMark) snapShow(null);
+  rubShow(null);
+  hlShow(null, 0, '');
+});
 
 /* ★押した所を拾う。⚠️ **回した（ドラッグした）ときは拾わない**
    （OrbitControls と取り合いになるので、動いた距離で見分ける）*/
@@ -2478,7 +2723,7 @@ renderer.domElement.addEventListener('pointerup', ev => {
   if (!hit) { log('モデルの上を押してください'); return; }
   /* ── ⊢ 線と点の距離 ── */
   if (mTool === 'ldist') {
-    if (!mLinePend) {
+    if (!mLinePend) {  /* ★1本目：線 */
       if (!hit.line) {
         log('✗ ここは稜線ではありません。★**辺の上**を押してください' +
             '（吸い付くと「稜線」と出ます）', 'wa');
@@ -2487,8 +2732,9 @@ renderer.domElement.addEventListener('pointerup', ev => {
       const len = hit.line.a.distanceTo(hit.line.b);
       if (!(len > 0)) { log('✗ 線の長さが取れませんでした', 'wa'); return; }
       mLinePend = hit.line;
+      mPendMark(null, hit.line);            /* ★取った線を見えるように残す */
       log('線を取りました（長さ ~ ' + len.toFixed(2) + ' mm）。' +
-          'つぎに**点**を押してください');
+          'つぎに**点**を押してください（★回してからでも大丈夫です）');
       return;
     }
     /* 2回目：点 → 線への垂線 */
@@ -2501,6 +2747,7 @@ renderer.domElement.addEventListener('pointerup', ev => {
     const t = hit.p.clone().sub(A).dot(d) / l2;
     const foot = A.clone().addScaledVector(d, t);
     const dist = foot.distanceTo(hit.p);
+    mPendClear();
     const objs = [mLine(A, B), mLine(foot, hit.p), mDot(hit.p), mDot(foot)];
     mItems.push({ kind: 'ldist', pts: [foot.clone(), hit.p.clone()], objs: objs,
       txt: '線から ~ ' + dist.toFixed(2) + ' mm' });
@@ -2514,10 +2761,13 @@ renderer.domElement.addEventListener('pointerup', ev => {
   mPend.push(hit.p);
   const need = mTool === 'dist' ? 2 : mTool === 'ang' ? 3 : 1;
   if (mPend.length < need) {
+    mPendMark(hit.p);                       /* ★拾った所を見えるように残す */
     log('あと ' + (need - mPend.length) + ' 点' +
-        (hit.snap ? '（' + hit.snap + 'にくっつきました）' : '（面の上）'));
+        (hit.snap ? '（' + hit.snap + 'にくっつきました）' : '（面の上）') +
+        '　★回してからでも大丈夫です');
     return;
   }
+  mPendClear();
   mAdd(mTool, mPend);
   mPend = [];
 });
@@ -2527,6 +2777,28 @@ const M_FACE = { thick: 1, dia: 1, fdist: 2, fang: 2 };
 let mFacePend = [];
 /** 「線と点」の1回目で覚えた線 */
 let mLinePend = null;
+/**
+ * 🔴 **途中まで拾った所の印。**
+ * ⚠️ これが無いと「表面を押す → 回して裏返す → 反対の面を押す」をやったとき、
+ *    回している間に**どこを拾ったか分からなくなる**（本人の指摘）。
+ * ★完成・道具替え・全部消すで片付ける。
+ */
+let mPendObjs = [];
+function mPendMark(p, isLine){
+  const o = isLine ? mLine(isLine.a, isLine.b) : mDot(p);
+  /* ★途中の印は**薄水色**（確定した青と見分ける。本人の指示）。
+     ⚠️ `mLine`/`mDot` は**濃い／薄いの2枚**を入れた Group を返すので、
+        `o.material` を触っても片方しか変わらない。**中身を全部たどる。** */
+  o.traverse(x => { if (x.material && x.material.color) x.material.color.set(0x9fe4ff); });
+  mPendObjs.push(o);
+}
+function mPendClear(){
+  mPendObjs.forEach(o => scene.remove(o));
+  mPendObjs = [];
+  /* ★ゴムひもと途中の値も片付ける（確定した値と二重に出さない）*/
+  if (rubLine) rubLine.visible = false;
+  if (rubLab) rubLab.style.display = 'none';
+}
 
 /** 面を押したときの処理 */
 function mFaceClick(ev){
@@ -2589,7 +2861,13 @@ function mFaceClick(ev){
     return;
   }
   mFacePend.push(f);
-  if (mFacePend.length < 2) { log('あと1面（平らな面を押してください）'); return; }
+  if (mFacePend.length < 2) {
+    mPendMark(f.hit);                       /* ★拾った面の所を見えるように残す */
+    log('あと1面（平らな面を押してください）' +
+        '　★**回して裏側の面**を押しても大丈夫です');
+    return;
+  }
+  mPendClear();
   const A = mFacePend[0], B = mFacePend[1];
   mFacePend = [];
   const cosv = Math.max(-1, Math.min(1, A.n.dot(B.n)));

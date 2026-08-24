@@ -109,6 +109,9 @@ a{color:var(--accent-hi)}
   <button id="drv" style="display:none">Drive から</button>
   <!-- ★上は「入口」と「持ち出し」だけ。見る道具は**下のバー**に移した
        （AutoDesk と同じ置き方。上に全部並べると小さくて押せない）-->
+  <!-- ★手順書に貼るとき用。**既定は暗い色**、押すと純白 -->
+  <label id="bgw" style="display:none" title="手順書などに貼るときは白が使いやすいです">
+    <input type="checkbox" id="bgwc"> 白背景</label>
   <button id="shot" style="display:none">スクリーンショット</button>
   <!-- ⚠️ `fit` と `treebtn` は下のバーに移したが、**id は残す**
        （既にある結線をそのまま生かす。隠しておいて下のバーから押させる）-->
@@ -180,6 +183,10 @@ a{color:var(--accent-hi)}
 #tree .tn{overflow:hidden;text-overflow:ellipsis;}
 #tree .tc{margin-left:auto;color:#6f80a3;font-size:11px;flex:none;}
 #treebtn{display:none;}
+/* 白背景のチェックボックス。★ヘッダのボタンと高さを揃える */
+#bgw{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);
+  padding:0 6px;cursor:pointer;white-space:nowrap;}
+#bgw input{margin:0;cursor:pointer;}
 </style>
 <main>
   <canvas id="cv"></canvas>
@@ -368,7 +375,9 @@ controls.zoomSpeed = 1.1;
 controls.panSpeed = 1.0;
 /* ⚠️ **ズームに慣性を入れない**（`zoomToCursor` は入れる。狙った所へ寄れる）*/
 controls.zoomToCursor = true;
-scene.add(new THREE.HemisphereLight(0xdfefff, 0x0a1020, 1.1));
+/* ★背景の色で強さを変えるので**変数に持つ**（白地だと陰影が弱いと立体に見えない）*/
+const hemi = new THREE.HemisphereLight(0xdfefff, 0x0a1020, 1.1);
+scene.add(hemi);
 const dl = new THREE.DirectionalLight(0xffffff, 1.5);
 dl.position.set(1, 1.4, 1); scene.add(dl);
 let model = null;
@@ -455,6 +464,7 @@ async function draw(buf, kind, tAll){
   /* ★道具を出す（読むまでは押せないボタンを並べない）*/
   document.getElementById('bar').style.display = 'flex';
   document.getElementById('shot').style.display = '';
+  document.getElementById('bgw').style.display = '';
   treeShow(true);
   navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
   secOn = false; secFlip = false;
@@ -465,6 +475,38 @@ async function draw(buf, kind, tAll){
   log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');
   if (tri > 2000000) log('⚠️ 三角形が200万超。スマホでは重いはずです', 'wa');
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   背景の色（暗い／白）
+   ══════════════════════════════════════════════════════════════════════
+   ★用途は「**手順書に貼る**」なので、薄いグレーではなく**純白**にする。
+   ⚠️ 白にすると**破線の枠**（水色）が見えなくなるので**色も一緒に切り替える**。
+   ⚠️ スクリーンショットは canvas をそのまま取るので、**この色がそのまま入る**。
+   ★覚える。既定は暗い色（本人の指示）。
+   ══════════════════════════════════════════════════════════════════════ */
+const BG_KEY = 'plmvBgWhite';
+let bgWhite = false;
+
+function bgSet(white){
+  bgWhite = !!white;
+  scene.background = new THREE.Color(bgWhite ? 0xffffff : 0x080d18);
+  /* ★白のときは枠を濃い青にする（水色は白地で消える）*/
+  if (secFrame) secFrame.material.color.set(bgWhite ? 0x0a6ebd : 0x7fd4ff);
+  /* ⚠️ 白地だと影が要る（浮いて見えないと立体か分からない）。
+     ★いまは影を落としていないので、代わりに**環境光を少し落として陰影を強める**。 */
+  hemi.intensity = bgWhite ? 0.75 : 1.1;
+  dl.intensity = bgWhite ? 1.9 : 1.5;
+  const c = document.getElementById('bgwc');
+  if (c) c.checked = bgWhite;
+  try { localStorage.setItem(BG_KEY, bgWhite ? '1' : '0'); } catch (e) {}
+}
+
+document.getElementById('bgwc').addEventListener('change', function(){
+  bgSet(this.checked);
+});
+/* ⚠️ **ここで呼ばない。** `bgSet` は `secFrame` を触るが、あれはこの下（断面の節）で
+   `let` で宣言されているので、ここで呼ぶと **TDZ で落ちる**（`typeof` でも避けられない）。
+   ★呼ぶのは全部の宣言が済んだあと。 */
 
 /* ══════════════════════════════════════════════════════════════════════
    見る向き（面・軸回転）
@@ -544,6 +586,28 @@ let secMerged = false;    /* 部品が多くて1色にまとめたか */
 const SEC_MAX_PARTS = 60;
 
 /**
+ * 切り口のハッチング。★製図の見え方に寄せる（AutoDesk も切り口に線を入れている）
+ * ⚠️ **白地に暗い線**にする（`map` は色に掛かるので、部品ごとの色を残せる）。
+ * ★1枚だけ作って使い回す（蓋の数だけ作らない）。
+ */
+let hatchTex = null;
+function hatchTexture(){
+  if (hatchTex) return hatchTex;
+  const S = 64, cv = document.createElement('canvas');
+  cv.width = S; cv.height = S;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#fff'; c.fillRect(0, 0, S, S);
+  c.strokeStyle = 'rgba(0,0,0,.30)'; c.lineWidth = 2;
+  /* ★45度の線。継ぎ目が出ないように**両端に回り込ませる** */
+  for (let i = -S; i <= S * 2; i += 16) {
+    c.beginPath(); c.moveTo(i, 0); c.lineTo(i + S, S); c.stroke();
+  }
+  hatchTex = new THREE.CanvasTexture(cv);
+  hatchTex.wrapS = hatchTex.wrapT = THREE.RepeatWrapping;
+  return hatchTex;
+}
+
+/**
  * 蓋の材料。★片面だけ塗る（両面だと裏から見たとき手前に出る）
  * @param {THREE.Color} base その部品の色。★**部品ごとに色を変える**ので受け取る
  *   ⚠️ 部品の色そのままだと「切った所」だと分からない。
@@ -554,6 +618,7 @@ function capMaterial(base){
     .lerp(new THREE.Color(0xff7a2f), 0.35);
   return new THREE.MeshStandardMaterial({
     color: col, metalness: .1, roughness: .8,
+    map: hatchTexture(),               /* ★切り口にハッチング */
     stencilWrite: true, stencilRef: 0,
     stencilFunc: THREE.NotEqualStencilFunc,
     stencilFail: THREE.ReplaceStencilOp,
@@ -619,6 +684,14 @@ function secBuild(){
     /* ③ 蓋。★その部品の色から作る（部品を見分けられるように）*/
     const base = set[0].material && set[0].material.color ? set[0].material.color : null;
     const cap = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMaterial(base));
+    /* ⚠️ `PlaneGeometry` の UV は 0〜1 なので、そのままだと**蓋の大きさで
+       ハッチングの間隔が変わる**（大きい部品では線が伸びて見えない）。
+       ★「蓋の大きさ ÷ ピッチ」を `repeat` に入れて**世界の大きさで等間隔**にする。 */
+    const pitch = Math.max(b.r * 0.06, 1e-6);
+    cap.material.map = hatchTexture().clone();
+    cap.material.map.wrapS = cap.material.map.wrapT = THREE.RepeatWrapping;
+    cap.material.map.repeat.set(size / pitch, size / pitch);
+    cap.material.map.needsUpdate = true;
     cap.renderOrder = i * 2 + 2.5;
     cap.visible = false;
     /* 🔴 **この部品の蓋を描いたらステンシルを消す。**
@@ -649,6 +722,8 @@ function secBuild(){
   secFrame.renderOrder = 900;
   secFrame.material.depthTest = false;
   secFrame.visible = false;
+  /* ★いまの背景に合わせる（白地で水色は見えない）*/
+  secFrame.material.color.set(bgWhite ? 0x0a6ebd : 0x7fd4ff);
   scene.add(secFrame);
 
   /* ★掴んで動かす矢印。
@@ -963,6 +1038,13 @@ document.getElementById('opt').addEventListener('input', ev => {
     secApply();
   }
 });
+
+/* ★背景の初期化はここ（`secFrame` などの宣言が済んでから）*/
+(function bgInit(){
+  let w = false;
+  try { w = localStorage.getItem(BG_KEY) === '1'; } catch (e) {}
+  bgSet(w);
+})();
 
 navMode('orbit');
 
@@ -1559,6 +1641,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       document.getElementById('fit').disabled = false;
       document.getElementById('bar').style.display = 'flex';
       document.getElementById('shot').style.display = '';
+      document.getElementById('bgw').style.display = '';
       document.getElementById('ph').style.display = 'none';   /* 案内を隠す */
       secOn = false; secFlip = false; secPosVal = 500;
       navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();

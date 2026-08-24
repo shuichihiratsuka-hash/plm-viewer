@@ -79,6 +79,22 @@ main{flex:1;position:relative;min-height:14rem}
 #ph .cutr button{min-height:30px;padding:3px 10px;font-size:12px;flex:none;}
 #ph .cuth{padding:6px 9px;font-size:11px;color:#8fa2c6;
   border-bottom:1px solid #23324f;background:rgba(20,30,50,.7);}
+#ph .cutr .sz{color:#3fb950;}
+#ph .cutr .sz.mid{color:#e3b341;}
+#ph .cutr .sz.big{color:#f85149;}
+/* ★名前を押すと中へ降りる（押せることが分かるように下線）*/
+#ph .cutr .nm.dn{cursor:pointer;text-decoration:underline dotted;
+  text-underline-offset:3px;pointer-events:auto;}
+#ph .cutr .nm.dn:hover{color:#fff;}
+#ph .cutr .nm.dn b{color:#8fa2c6;font-size:11px;}
+/* ★パン屑 */
+#ph .cutb{pointer-events:auto;width:min(94vw,44rem);text-align:left;
+  font-size:11px;color:#8fa2c6;margin-top:.5rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#ph .cutb .cb{cursor:pointer;color:#9fc2f0;text-decoration:underline dotted;
+  text-underline-offset:3px;}
+#ph .cutb .cb:hover{color:#fff;}
+#ph .cutb .cs{color:#4a5b7c;margin:0 5px;}
 /* ══ 下のログ欄 ══════════════════════════════════════════════════
    ★既定は**3行ぶん**。⚠️ 以前は `max-height:42vh` で、ログが増えると
      **絵の面積を食っていた**（実機で画面の半分近くを占めていた）。
@@ -110,7 +126,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824y</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824z</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -390,6 +406,21 @@ document.getElementById('ph').addEventListener('click', ev => {
     const t = scanTops[Number(cb.getAttribute('data-i'))];
     document.querySelectorAll('#ph [data-cut]').forEach(x => { x.disabled = true; });
     exRun(szLast, Number(cb.getAttribute('data-cut')), t ? t.name : '切り出し');
+    return;
+  }
+  /* ★名前を押して**中へ降りる** */
+  const dn = ev.target.closest ? ev.target.closest('[data-into]') : null;
+  if (dn) {
+    const t = scanTops[Number(dn.getAttribute('data-into'))];
+    if (t) { cutPath.push(t.pd); cutRender(); }
+    return;
+  }
+  /* ★パン屑で戻る */
+  const up = ev.target.closest ? ev.target.closest('[data-up]') : null;
+  if (up) {
+    const k = Number(up.getAttribute('data-up'));
+    cutPath = (k < 0) ? [] : cutPath.slice(0, k + 1);
+    cutRender();
     return;
   }
   const id = ev.target && ev.target.id;
@@ -3672,6 +3703,13 @@ const AB_MAX = 2046 * 1024 * 1024;
 let szForce = false, szLast = null;
 const SZ_WARN = 150 * 1048576;    /* これを超えたら警告して通す */
 const SZ_STOP = 800 * 1048576;    /* これを超えたら止める */
+/* 🔴 **STEP の現実的な目安**（GLB とは別に持つ）。
+   ⚠️ GLB は形が出来上がっているので 1GB 級でも入るが、**STEP は OCCT が
+      形を組み立て直すのでファイルの数倍**のメモリを使う。同じ数字で考えてはいけない。
+   ⚠️ 変換部品は **32bit の WASM で 4GB が天井**。RAM を積んでも変わらない。
+   ★実機で 900MB がメモリ不足で開けなかった（2026-08-24）。 */
+const STEP_SOFT = 250 * 1048576;  /* これ以下なら開ける見込み */
+const STEP_HARD = 600 * 1048576;  /* これを超えるとほぼ無理 */
 
 /**
  * @return {boolean} 進めてよいか
@@ -4213,6 +4251,85 @@ async function scanStep(file, opt){
 let scanStop = false;
 /** ★調べた結果のサブ組立の一覧（画面の真ん中に出すため）*/
 let scanTops = [];
+/** ★調べた結果そのもの（降りるのに要る）*/
+let scanRes = null;
+/** ★いま見ている階層（根からの道。パン屑に出す）*/
+let cutPath = [];
+
+/* ══════════════════════════════════════════════════════════════════
+   切り出しの一覧（下の階層へ降りられる）
+   ══════════════════════════════════════════════════════════════════
+   🔴 **RAM を積んでも 900MB は開けない。** `occt-import-js` は **32bit の WASM**
+      なので、端末の RAM がいくらあっても **4GB より広い場所を使えない**。
+      STEP を読むのに要るのは
+        ファイルのバイト（WASM に写す）
+        ＋ **OCCT が組み立てる形の模型（ふつうファイルの数倍）**
+        ＋ 三角形に割った結果
+      ⇒ 900MB の STEP は軽く 4GB を超える。**RAM の話ではない。**
+   ★だから答えは「**もっと小さく切り出す**」。
+     根の直下だけでは足りないので、**名前を押して中へ降りられる**ようにする。
+   ══════════════════════════════════════════════════════════════════ */
+
+/** その品目の目安の大きさ（全体に対する形の数の割合から）*/
+function cutEst(pd){
+  const r = scanRes;
+  if (!r || !r.rootItems) return 0;
+  return r.bytes * (r.subtree(pd).items / r.rootItems);
+}
+
+/** いまの階層の一覧を描く */
+function cutRender(){
+  const r = scanRes;
+  if (!r) return;
+  const here = cutPath.length ? cutPath[cutPath.length - 1] : null;
+  /* ★子を数える（同じ品目が何個ぶら下がるか）*/
+  const ks = here === null ? r.roots : (r.kidsOf.get(here) || []);
+  const cnt = new Map();
+  ks.forEach(c => cnt.set(c, (cnt.get(c) || 0) + 1));
+  const rows = [];
+  cnt.forEach((k, c) => rows.push({ pd: c, k: k, s: r.subtree(c), est: cutEst(c) }));
+  rows.sort((a, b) => b.est - a.est);
+  scanTops = rows.map(q => ({ pd: q.pd, name: r.nameOf(q.pd), leaf: q.s.leaf,
+                              items: q.s.items, est: q.est, kids: (r.kidsOf.get(q.pd) || []).length }));
+  /* ★パン屑（押すと戻れる）*/
+  const crumb = ['<span class="cb" data-up="-1">全体</span>']
+    .concat(cutPath.map((pd, i) =>
+      '<span class="cb" data-up="' + i + '">' + esc(r.nameOf(pd)) + '</span>'))
+    .join('<span class="cs">›</span>');
+  /* ★行 */
+  const body = scanTops.length ? scanTops.map((t, i) => {
+    const big = t.est > STEP_HARD;
+    const warn = !big && t.est > STEP_SOFT;
+    return '<div class="cutr">' +
+      (t.kids
+        ? '<span class="nm dn" data-into="' + i + '" title="中へ降りる：' +
+          esc(t.name) + '">' + esc(t.name) + '　<b>▸' + t.kids + '</b></span>'
+        : '<span class="nm" title="' + esc(t.name) + '">' + esc(t.name) + '</span>') +
+      '<span class="sz' + (big ? ' big' : warn ? ' mid' : '') + '">部品 ' +
+        t.leaf.toLocaleString() + '　' + mb(t.est) + '</span>' +
+      '<button data-cut="' + t.pd + '" data-i="' + i + '">切り出して開く</button>' +
+      '</div>';
+  }).join('') : '<div class="cutr"><span class="nm">' +
+      'これ以上の下は無し（部品そのもの）</span></div>';
+  const cur = here === null ? null : r.subtree(here);
+  phSay('<b>切り出すサブ組立を選んでください</b><span>' +
+    '🔴 <b>RAM を積んでも大きい STEP は開きません。</b>' +
+    '変換部品が 32bit なので <b>4GB より広い場所を使えない</b>のが壁です。' +
+    'STEP は OCCT が形を組み立て直すので、<b>ファイルの数倍</b>のメモリを使います。<br>' +
+    '★<b>' + mb(STEP_SOFT) + ' あたりを目安に、それより大きければ名前を押して' +
+    '<b>中へ降りて</b>ください。</b>' +
+    (cur ? '<br>いまの階層：部品のべ ' + cur.leaf.toLocaleString() +
+           '　目安 ' + mb(cutEst(here)) : '') +
+    '</span>' +
+    '<div class="cutb">' + crumb + '</div>' +
+    '<div class="cutl"><div class="cuth">' +
+      '名前を押すと<b>中へ降りる</b>（<b>▸</b> の数は直下の品目数）／' +
+      '<span style="color:#3fb950">緑</span>は開けそう・' +
+      '<span style="color:#e3b341">黄</span>は重い・' +
+      '<span style="color:#f85149">赤</span>は無理' +
+      '</div>' + body + '</div>' +
+    '<button id="phback">別のファイルを選ぶ</button>');
+}
 /** ★同じファイルの索引は持ち回す（2回目以降の切り出しが速い）*/
 let exCache = null;      /* { file, r } */
 
@@ -4518,17 +4635,20 @@ async function scanShow(file){
   });
 
   /* ── まとめ（★「どれなら開けるか」を出す。これが一番知りたいこと）── */
-  const fit = tops.filter(t => t.est <= SZ_STOP).sort((a, b) => b.est - a.est);
-  const big = tops.filter(t => t.est > SZ_STOP);
+  const fit = tops.filter(t => t.est <= STEP_SOFT).sort((a, b) => b.est - a.est);
+  const big = tops.filter(t => t.est > STEP_SOFT);
   log('── まとめ ──', 'ok');
+  log('　🔴 <b>STEP は OCCT が形を組み立て直すので、ファイルの数倍のメモリを使います。</b>');
+  log('　　変換部品は **32bit の WASM で 4GB が天井**なので、' +
+      '**RAM を積んでも変わりません**。目安は **' + mb(STEP_SOFT) + ' 以下**です。');
   if (fit.length)
-    log('　★<b>そのまま開けそうなサブ組立</b>（目安 ' + mb(SZ_STOP) + ' 以下）：' +
+    log('　★<b>そのまま開けそうなサブ組立</b>（目安 ' + mb(STEP_SOFT) + ' 以下）：' +
         fit.length + ' 件。大きい順に ' +
         fit.slice(0, 5).map(t => t.name + '（' + mb(t.est) + '）').join('／'), 'ok');
   if (big.length)
     log('　⚠️ <b>まだ大きいサブ組立</b>：' + big.length + ' 件（' +
         big.slice(0, 5).map(t => t.name + '（' + mb(t.est) + '）').join('／') +
-        '）。これらは**さらに下の階層**で出してください', 'wa');
+        '）。★一覧で**名前を押して中へ降りて**から切り出してください', 'wa');
   log('　⚠️ 「目安」は**形の数の割合**からの推定です。');
   log('　★<b>「切り出して開く」</b>を押すと、そのサブ組立だけの STEP を作って開きます。');
   log('　⚠️ **1回目は索引を作るためもう一度流し読みします**（このファイルなら数分）。' +
@@ -4536,29 +4656,13 @@ async function scanShow(file){
   log('　⚠️ 切り出しは**色と組立の入れ子は残し、分類と層は捨てます**（見るのに要らないため）。');
 
   /* 🔴 **一覧は画面の真ん中に出す。**
-     ⚠️ ログ欄は既定 3 行なので、そこに出したボタンは**上へスクロールして隠れる**
-        （本人の報告「切り出して開くボタンがないよ」の正体）。 */
-  scanTops.sort((a, b) => b.est - a.est);
-  const rowsHtml = scanTops.map((t, i) => {
-    const big = t.est > SZ_STOP;
-    return '<div class="cutr">' +
-      '<span class="nm" title="' + esc(t.name) + '">' + esc(t.name) + '</span>' +
-      '<span class="sz' + (big ? ' big' : '') + '">部品 ' +
-        t.leaf.toLocaleString() + '　' + mb(t.est) + '</span>' +
-      '<button data-cut="' + t.pd + '" data-i="' + i + '">切り出して開く</button>' +
-      '</div>';
-  }).join('');
-  phSay('<b>調べ終わりました</b><span>' +
-    '実体 ' + r.total.toLocaleString() + ' 個／品目 ' + r.products.toLocaleString() + ' 件。' +
-    (fit.length
-      ? '★<b>そのまま開けそうなサブ組立が ' + fit.length + ' 件</b>あります。'
-      : '⚠️ どのサブ組立も大きいままですが、切り出せば小さくできます。') +
-    '</span>' +
-    '<div class="cutl"><div class="cuth">' +
-      'サブ組立を選んで「切り出して開く」（大きい順。' +
-      '<span style="color:#e3b341">黄色</span>は ' + mb(SZ_STOP) + ' 超）' +
-      '</div>' + rowsHtml + '</div>' +
-    '<button id="phback">別のファイルを選ぶ</button>');
+     ⚠️ ログ欄は既定 3 行なので、そこに出したボタンは**上へスクロールして隠れる**。
+     ★根の直下だけでは足りない（900MB がメモリ不足で開けなかった）ので、
+       **中へ降りられる**一覧にする。 */
+  scanRes = r;
+  r.rootItems = r.roots.reduce((a, x) => a + r.subtree(x).items, 0) || 1;
+  cutPath = (r.roots.length === 1) ? [r.roots[0]] : [];   /* ★根が1つなら中から始める */
+  cutRender();
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -5031,7 +5135,8 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
     renderer,
     scanStep, scanShow, partAxis, cubeSpin, faceFit, mPickFace, mItems: () => mItems,
-    exClosure, exWrite, exRun,
+    exClosure, exWrite, exRun, cutRender,
+    get cutPath(){ return cutPath; }, set cutPath(v){ cutPath = v; },
     /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。
          ⚠️ 隠れたタブでは rAF が止まるので、確認はここから直に叩く） */
     snapShow, rubShow, mPxUpdate,

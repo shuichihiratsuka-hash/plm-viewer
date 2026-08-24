@@ -96,7 +96,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0824k</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0824m</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -352,9 +352,16 @@ function log(t, cls){
 
 /* ★案内の中の「別のファイルを選ぶ」を受ける */
 document.getElementById('ph').addEventListener('click', ev => {
-  if (ev.target && ev.target.id === 'phback') {
+  const id = ev.target && ev.target.id;
+  if (id === 'phback') {
     phReset();
     document.getElementById('f').click();
+    return;
+  }
+  /* ★開けない大きさでも**中身は調べられる**（流し読み）*/
+  if (id === 'phscan' && szLast) {
+    ev.target.disabled = true;
+    scanShow(szLast);
   }
 });
 
@@ -2684,7 +2691,11 @@ function sizeGate(bytes, name){
       '② CAD Assistant（無償・Windows のアプリ）で STEP → GLB<br>' +
       '③ サブ組立ごとに書き出す<br>' +
       '<br>どれも<b>自分の PC の中だけ</b>で終わります。' +
-      '</span><button id="phback">別のファイルを選ぶ</button>');
+      '</span>' +
+      /* ★行き止まりを作らない。**開けなくても中身は調べられる。**
+         「どのサブ組立を CAD から出せばよいか」がここで分かる。 */
+      '<button id="phscan" class="pri">中身を調べる（読み込まずに）</button>' +
+      '<button id="phback">別のファイルを選ぶ</button>');
     return false;
   }
   if (b > SZ_WARN) {
@@ -2693,6 +2704,355 @@ function sizeGate(bytes, name){
     log('　⚠️ 失敗しても**ブラウザには残りません**（押し直すと丸ごと落ち直します）。');
   }
   return true;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   大きい STEP を「読み込まずに」調べる（流し読み）
+   ══════════════════════════════════════════════════════════════════════
+   🔴 **読み込めないファイルでも中身は調べられる。**
+      `file.slice()` で少しずつ読むので **ArrayBuffer の 2046MB の壁に当たらない**。
+   ★分かること：組立の木／部品ごとの形の数／実体の内訳
+   ⇒ 「**どのサブ組立を CAD から出せばよいか**」「分けても収まるのか」が
+      ファイルを開かずに分かる。
+   ⚠️ **切り出し（本当の分割）はここではやらない。**
+      STEP の実体は `#番号` で参照し合っているので、切り出すには到達閉包が要る。
+      2.29GB だと実体が数千万個で、索引だけで数百MB〜1GB。**別の作業の大きさ。**
+      ★まずこれで、切り出す価値があるかを見る。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** 調べたい種類。★これだけ中身まで見る（残りは数えるだけ）*/
+const SCAN_KEEP = {
+  'PRODUCT': 1,
+  'PRODUCT_DEFINITION': 1,
+  'PRODUCT_DEFINITION_FORMATION': 1,
+  'PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE': 1,
+  'NEXT_ASSEMBLY_USAGE_OCCURRENCE': 1,
+  'PRODUCT_DEFINITION_SHAPE': 1,
+  'SHAPE_DEFINITION_REPRESENTATION': 1,
+  'ADVANCED_BREP_SHAPE_REPRESENTATION': 1,
+  'MANIFOLD_SURFACE_SHAPE_REPRESENTATION': 1,
+  'SHAPE_REPRESENTATION': 1,
+  'GEOMETRICALLY_BOUNDED_SURFACE_SHAPE_REPRESENTATION': 1
+};
+
+/* ★文の中身を文字に直す道具。
+   🔴 **`latin1` 固定は駄目**（日本語が化ける。自作の STEP で捕まえた）。
+   ★STEP の日本語は2通り：
+     ・そのまま UTF-8 で埋め込む（最近の CAD）
+     ・`\X2\30E1…\X0\`（UTF-16BE の16進）で逃がす（規格どおり）
+   ⇒ まず UTF-8 で試し、化けたら latin1 に落とす。そのうえで `\X2\` を戻す。
+   ⚠️ 文の区切りは `;`（ASCII）なので、切り出した範囲が文字の途中で割れることはない。 */
+const DEC_U8 = new TextDecoder('utf-8');
+const DEC_L1 = new TextDecoder('latin1');
+function stepText(b){
+  let t = DEC_U8.decode(b);
+  if (t.indexOf('\ufffd') >= 0) t = DEC_L1.decode(b);   /* ⚠️ UTF-8 として壊れていた */
+  /* ★`\X2\…\X0\` は UTF-16BE の16進。4桁ずつ文字に直す */
+  if (t.indexOf('\\X2\\') >= 0)
+    t = t.replace(/\\X2\\([0-9A-Fa-f]+)\\X0\\/g, (_, h) => {
+      let o = '';
+      for (let i = 0; i + 4 <= h.length; i += 4) o += String.fromCharCode(parseInt(h.substr(i, 4), 16));
+      return o;
+    });
+  /* ★`\X\41` は1バイト（latin1）の逃がし */
+  if (t.indexOf('\\X\\') >= 0)
+    t = t.replace(/\\X\\([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return t;
+}
+
+/** `#12` の並びを取り出す */
+function scanRefs(t){
+  const a = [], re = /#(\d+)/g;
+  let m;
+  while ((m = re.exec(t))) a.push(Number(m[1]));
+  return a;
+}
+/** `'…'` の並びを取り出す（STEP の中の `''` は文字としての `'`）*/
+function scanStrs(t){
+  const a = [], re = /'((?:[^']|'')*)'/g;
+  let m;
+  while ((m = re.exec(t))) a.push(m[1].replace(/''/g, "'"));
+  return a;
+}
+
+/**
+ * STEP を流し読みして中身を調べる。
+ * @param {File} file
+ * @returns {Promise<object>} 調べた結果
+ *
+ * ⚠️ **バイトのまま**状態機械で回す（1文字ずつ文字列にすると数十倍遅い）。
+ * ⚠️ 種類名は**長さと先頭3バイト**で数え、最後に一度だけ文字へ直す
+ *    （数千万回の文字列化を避ける）。
+ */
+async function scanStep(file){
+  const CH = 16 * 1024 * 1024;          /* 一度に読む量 */
+  let pos = 0, st = 0;                   /* st: 0=ふつう 1=文字列 2=注釈 */
+  let carry = new Uint8Array(0);         /* 文の途中で切れた分 */
+  let cmt = 0;                           /* 注釈が始まった位置 */
+  let total = 0, maxId = 0;
+  const kinds = new Map();               /* 「長さ|先頭3」→ {n, name} */
+  const keep = [];                       /* 中身まで見る文（少ない）*/
+  const t0 = performance.now();
+  let lastLog = 0;
+
+  while (pos < file.size) {
+    const end = Math.min(pos + CH, file.size);
+    const buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+    /* ★前回の残りと繋ぐ */
+    let b;
+    if (carry.length) {
+      b = new Uint8Array(carry.length + buf.length);
+      b.set(carry); b.set(buf, carry.length);
+    } else b = buf;
+    let start = 0, i = 0;
+    const L = b.length;
+    while (i < L) {
+      const c = b[i];
+      if (st === 0) {
+        if (c === 0x27) { st = 1; i++; continue; }                 /* ' */
+        if (c === 0x2f && b[i + 1] === 0x2a) {                      /* slash star */
+          st = 2; cmt = i; i += 2; continue;
+        }
+        if (c === 0x3b) {                                          /* ; */
+          /* ── 1文ぶん ── */
+          let j = start;
+          while (j < i && b[j] <= 0x20) j++;
+          if (b[j] === 0x23) {                                     /* # */
+            let k = j + 1, id = 0;
+            while (k < i && b[k] >= 0x30 && b[k] <= 0x39) { id = id * 10 + (b[k] - 0x30); k++; }
+            while (k < i && (b[k] <= 0x20 || b[k] === 0x3d)) k++;  /* 空白と = */
+            let e = k;
+            while (e < i && ((b[e] >= 0x41 && b[e] <= 0x5a) ||
+                             (b[e] >= 0x61 && b[e] <= 0x7a) ||
+                             b[e] === 0x5f ||
+                             (b[e] >= 0x30 && b[e] <= 0x39))) e++;
+            const len = e - k;
+            if (len > 0 && len < 80) {
+              total++;
+              if (id > maxId) maxId = id;
+              /* ★種類は「長さ|先頭3バイト」で数える（文字列化しない）*/
+              const key = len * 16777216 + b[k] * 65536 + (b[k + 1] || 0) * 256 + (b[k + 2] || 0);
+              let rec = kinds.get(key);
+              if (!rec) {
+                /* ★種類名は必ず ASCII なので latin1 で十分（速い）*/
+                rec = { n: 0, name: DEC_L1.decode(b.subarray(k, e)).toUpperCase() };
+                kinds.set(key, rec);
+              }
+              rec.n++;
+              /* ★中身まで見る種類だけ、文をそのまま覚える */
+              if (SCAN_KEEP[rec.name] && keep.length < 400000)
+                keep.push({ id: id, kw: rec.name, t: stepText(b.subarray(e, i)) });
+            }
+          }
+          start = i + 1;
+          i++;
+          continue;
+        }
+        i++;
+        continue;
+      }
+      if (st === 1) {                                   /* 文字列の中 */
+        if (c === 0x27) st = 0;
+        i++;
+        continue;
+      }
+      /* 注釈の中 */
+      if (c === 0x2a && b[i + 1] === 0x2f) {
+        st = 0; i += 2;
+        /* 🔴 **注釈のぶんだけ文の先頭を進める。**
+           ⚠️ これをやらないと、注釈の直後の文の先頭が `#` ではなく `/` に見えて
+              **その1文が丸ごと落ちる**（自作の STEP で 5000 個が 4999 と出た）。
+           ★進めてよいのは「文の先頭から注釈までが空白だけ」のときだけ
+             （文の途中に入った注釈で先頭を失わないように）。 */
+        let w = start, ok2 = true;
+        while (w < cmt) { if (b[w] > 0x20) { ok2 = false; break; } w++; }
+        if (ok2) start = i;
+        continue;
+      }
+      i++;
+    }
+    /* ★途中で切れた分を次へ持ち越す。
+       ⚠️ 1文が読み取り単位より長いこともある（巨大な B-spline）。
+          そのときは持ち越しが伸びるが、それでよい（1文ぶんだけ）。 */
+    carry = b.subarray(start);
+    if (carry.length > 64 * 1024 * 1024) {
+      /* ⚠️ 1文が 64MB 超は異常（`;` の無い壊れたファイル）。止める */
+      throw new Error('区切りの `;` が見つからないまま 64MB を超えました' +
+                      '（STEP ではないかもしれません）');
+    }
+    carry = carry.slice();               /* ★写しを取る（元の buf を抱え続けない）*/
+    pos = end;
+    if (performance.now() - lastLog > 700) {
+      lastLog = performance.now();
+      log('　調べています… ' + Math.round(pos / file.size * 100) + '%' +
+          '（実体 ' + total.toLocaleString() + ' 個）');
+      await new Promise(r => setTimeout(r, 0));   /* ★画面を止めない */
+    }
+  }
+
+  /* ── 組立の木を組む ── */
+  const prodName = new Map();     /* PRODUCT の id → 名前 */
+  const pdfToProd = new Map();    /* FORMATION → PRODUCT */
+  const pdToPdf = new Map();      /* PRODUCT_DEFINITION → FORMATION */
+  const edges = [];               /* {parent, child} （PRODUCT_DEFINITION の id）*/
+  const pdsToPd = new Map();      /* PRODUCT_DEFINITION_SHAPE → PD */
+  const sdr = [];                 /* {pds, rep} */
+  const repItems = new Map();     /* 表現の id → 形の数 */
+
+  keep.forEach(q => {
+    const kw = q.kw;
+    if (kw === 'PRODUCT') {
+      const ss = scanStrs(q.t);
+      prodName.set(q.id, (ss[1] || ss[0] || '').trim() || ('#' + q.id));
+    } else if (kw.indexOf('PRODUCT_DEFINITION_FORMATION') === 0) {
+      const r = scanRefs(q.t);
+      if (r.length) pdfToProd.set(q.id, r[0]);
+    } else if (kw === 'PRODUCT_DEFINITION') {
+      const r = scanRefs(q.t);
+      if (r.length) pdToPdf.set(q.id, r[0]);
+    } else if (kw === 'NEXT_ASSEMBLY_USAGE_OCCURRENCE') {
+      const r = scanRefs(q.t);
+      if (r.length >= 2) edges.push({ parent: r[0], child: r[1] });
+    } else if (kw === 'PRODUCT_DEFINITION_SHAPE') {
+      const r = scanRefs(q.t);
+      if (r.length) pdsToPd.set(q.id, r[0]);
+    } else if (kw === 'SHAPE_DEFINITION_REPRESENTATION') {
+      const r = scanRefs(q.t);
+      if (r.length >= 2) sdr.push({ pds: r[0], rep: r[1] });
+    } else {
+      /* 表現：`('name',(#1,#2,…),#ctx)` の**真ん中の並びの数**を形の数とする */
+      /* ★`('名前',(#1,#2,…),#ctx)` の**真ん中の並び**を取る */
+      const m = q.t.match(/\(([^()]*)\)/);
+      const inner = m ? m[1] : '';
+      const c = (inner.match(/#\d+/g) || []).length;
+      repItems.set(q.id, c);
+    }
+  });
+
+  /** PD → 品名 */
+  function nameOf(pd){
+    const pdf = pdToPdf.get(pd);
+    const pr = pdf === undefined ? undefined : pdfToProd.get(pdf);
+    return (pr === undefined ? null : prodName.get(pr)) || ('#' + pd);
+  }
+  /* PD → 形の数 */
+  const pdItems = new Map();
+  sdr.forEach(q => {
+    const pd = pdsToPd.get(q.pds);
+    if (pd === undefined) return;
+    pdItems.set(pd, (pdItems.get(pd) || 0) + (repItems.get(q.rep) || 0));
+  });
+
+  const kidsOf = new Map(), isChild = new Set();
+  edges.forEach(e => {
+    if (!kidsOf.has(e.parent)) kidsOf.set(e.parent, []);
+    kidsOf.get(e.parent).push(e.child);
+    isChild.add(e.child);
+  });
+  const allPd = new Set();
+  pdToPdf.forEach((_, k) => allPd.add(k));
+  edges.forEach(e => { allPd.add(e.parent); allPd.add(e.child); });
+  const roots = [];
+  allPd.forEach(pd => { if (!isChild.has(pd)) roots.push(pd); });
+
+  /** 部分木の中の**のべ部品数**と**形の数**（★循環を踏まない）*/
+  const memo = new Map();
+  function sub2(pd, seen){
+    if (memo.has(pd)) return memo.get(pd);
+    if (seen.has(pd)) return { leaf: 0, items: 0 };   /* ⚠️ 循環 */
+    seen.add(pd);
+    const ks = kidsOf.get(pd) || [];
+    let leaf = ks.length ? 0 : 1, items = pdItems.get(pd) || 0;
+    ks.forEach(c => { const r = sub2(c, seen); leaf += r.leaf; items += r.items; });
+    seen.delete(pd);
+    const r = { leaf: leaf, items: items };
+    memo.set(pd, r);
+    return r;
+  }
+
+  const kindList = [];
+  kinds.forEach(v => kindList.push(v));
+  kindList.sort((a, b) => b.n - a.n);
+
+  return {
+    bytes: file.size, total: total, maxId: maxId,
+    sec: (performance.now() - t0) / 1000,
+    roots: roots, kidsOf: kidsOf, nameOf: nameOf,
+    subtree: pd => sub2(pd, new Set()),
+    products: prodName.size, kinds: kindList,
+    edges: edges.length
+  };
+}
+
+/** 調べた結果を画面に出す */
+async function scanShow(file){
+  log('── ' + file.name + ' を**読み込まずに**調べます（' + mb(file.size) + '）', 'ok');
+  log('　★1本のかたまりにせず少しずつ読むので、2046MB の壁に当たりません。');
+  phSay('<b>調べています…</b><span>' + esc(file.name) + '　' + mb(file.size) +
+        '<br>下のログに進み具合が出ます。</span>');
+  let r;
+  try { r = await scanStep(file); }
+  catch (e) {
+    log('✗ 調べられませんでした（' + String(e && e.message || e) + '）', 'ng');
+    phSay('<b>調べられませんでした</b><span>' +
+          esc(String(e && e.message || e)) +
+          '</span><button id="phback">別のファイルを選ぶ</button>');
+    return;
+  }
+  log('✓ 調べ終わりました　' + r.sec.toFixed(1) + ' 秒', 'ok');
+  log('　実体 ' + r.total.toLocaleString() + ' 個　品目 ' +
+      r.products.toLocaleString() + ' 件　組立の繋がり ' + r.edges.toLocaleString() + ' 本');
+  log('　★内訳（多い順）：' + r.kinds.slice(0, 8)
+        .map(k => k.name + ' ' + k.n.toLocaleString()).join('／'));
+
+  /* ── 組立の木（★深さ2まで。全部出すとログが埋まる）── */
+  const tops = [];
+  log('── 組立の木 ──');
+  r.roots.forEach(root => {
+    const rr = r.subtree(root);
+    log('▸ <b>' + esc(r.nameOf(root)) + '</b>　部品のべ ' +
+        rr.leaf.toLocaleString() + '　形 ' + rr.items.toLocaleString());
+    const ks = r.kidsOf.get(root) || [];
+    /* ★同じ品目が何個ぶら下がるかを数える */
+    const cnt = new Map();
+    ks.forEach(c => cnt.set(c, (cnt.get(c) || 0) + 1));
+    const rows = [];
+    cnt.forEach((k, c) => rows.push({ pd: c, k: k, s: r.subtree(c) }));
+    rows.sort((a, b) => b.s.items - a.s.items);
+    rows.slice(0, 40).forEach(q => {
+      const share = rr.items ? Math.round(q.s.items / rr.items * 100) : 0;
+      const est = r.bytes * (rr.items ? q.s.items / rr.items : 0);
+      tops.push({ name: r.nameOf(q.pd), items: q.s.items, est: est });
+      log('　├ ' + esc(r.nameOf(q.pd)) + (q.k > 1 ? '　×' + q.k : '') +
+          '　部品 ' + q.s.leaf.toLocaleString() +
+          '　形 ' + q.s.items.toLocaleString() +
+          '　<b>' + share + '%</b>（目安 ' + mb(est) + '）');
+    });
+    if (rows.length > 40) log('　└ ほか ' + (rows.length - 40) + ' 件');
+  });
+
+  /* ── まとめ（★「どれなら開けるか」を出す。これが一番知りたいこと）── */
+  const fit = tops.filter(t => t.est <= SZ_STOP).sort((a, b) => b.est - a.est);
+  const big = tops.filter(t => t.est > SZ_STOP);
+  log('── まとめ ──', 'ok');
+  if (fit.length)
+    log('　★<b>そのまま開けそうなサブ組立</b>（目安 ' + mb(SZ_STOP) + ' 以下）：' +
+        fit.length + ' 件。大きい順に ' +
+        fit.slice(0, 5).map(t => t.name + '（' + mb(t.est) + '）').join('／'), 'ok');
+  if (big.length)
+    log('　⚠️ <b>まだ大きいサブ組立</b>：' + big.length + ' 件（' +
+        big.slice(0, 5).map(t => t.name + '（' + mb(t.est) + '）').join('／') +
+        '）。これらは**さらに下の階層**で出してください', 'wa');
+  log('　⚠️ 「目安」は**形の数の割合**からの推定です。実際の書き出しは CAD 側で行います。');
+
+  phSay('<b>調べ終わりました</b><span>' +
+    '実体 ' + r.total.toLocaleString() + ' 個／品目 ' + r.products.toLocaleString() + ' 件<br>' +
+    (fit.length
+      ? '★<b>そのまま開けそうなサブ組立が ' + fit.length + ' 件</b>あります。<br>' +
+        'CAD からその単位で STEP か GLB を書き出してください。'
+      : '⚠️ どのサブ組立も大きいままです。<br>さらに下の階層で書き出してください。') +
+    '<br><br>詳しい内訳は下のログに出しています。' +
+    '</span><button id="phback">別のファイルを選ぶ</button>');
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -3164,6 +3524,7 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     },
     /* ★描いた結果を画素で測るために出す（画面の写しは縮尺が当てにならない）*/
     renderer,
+    scanStep, scanShow, partAxis, cubeSpin,
     renderNow() { renderer.render(scene, camera); },
     setSec(on, axis, pos, flip) {
       secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;

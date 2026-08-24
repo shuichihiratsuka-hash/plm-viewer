@@ -78,7 +78,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0824a</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824b</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -89,42 +89,59 @@ a{color:var(--accent-hi)}
   <input type="file" id="f" style="display:none">
   <button class="pri" id="pick">STEP を選ぶ</button>
   <button id="drv" style="display:none">Drive から</button>
-  <button id="fit" disabled>全体</button>
-  <button id="treebtn">部品ツリー</button>
+  <!-- ★上は「入口」と「持ち出し」だけ。見る道具は**下のバー**に移した
+       （AutoDesk と同じ置き方。上に全部並べると小さくて押せない）-->
+  <button id="shot" style="display:none">スクリーンショット</button>
+  <!-- ⚠️ `fit` と `treebtn` は下のバーに移したが、**id は残す**
+       （既にある結線をそのまま生かす。隠しておいて下のバーから押させる）-->
+  <button id="fit" disabled style="display:none">全体</button>
+  <button id="treebtn" style="display:none">部品ツリー</button>
 </header>
-<!-- ★2段目。モデルを読むまで隠す（押せないボタンを並べない）-->
-<div id="tools" style="display:none">
-  <span class="lb">見る向き</span>
-  <button data-v="xy">XY 面</button>
-  <button data-v="yz">YZ 面</button>
-  <button data-v="zx">ZX 面</button>
-  <button data-v="iso">等角</button>
-  <button id="flipv" title="反対側から見ます">反対</button>
-  <span class="sep"></span>
-  <span class="lb">回す</span>
-  <button data-r="x-">⟲X</button><button data-r="x+">⟳X</button>
-  <button data-r="y-">⟲Y</button><button data-r="y+">⟳Y</button>
-  <button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>
-  <span class="sep"></span>
-  <span class="lb">断面</span>
-  <button id="secon">切る</button>
-  <button data-s="x" class="sax">X</button>
-  <button data-s="y" class="sax">Y</button>
-  <button data-s="z" class="sax">Z</button>
-  <input type="range" id="secpos" min="0" max="1000" value="500" disabled>
-  <span id="secval" class="lb">—</span>
-  <button id="secflip" disabled title="切る向きを反対にします">反転</button>
-</div>
+
 <style>
-/* 2段目の道具。★ヘッダと同じ見た目に寄せる（別画面のように見せない）*/
-#tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
-  padding:7px 12px;background:#0d1424;border-bottom:1px solid #1e2a44;}
-#tools .lb{font-size:12px;color:#7f92b5;}
-#tools .sep{width:1px;height:20px;background:#1e2a44;margin:0 4px;}
-#tools button{padding:5px 9px;font-size:12px;}
-#tools button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}
-#tools input[type=range]{width:150px;}
-#tools input[type=range]:disabled{opacity:.4;}
+/* ══ 下のバー ══════════════════════════════════════════════════
+   ★AutoDesk と同じ置き方：**下の真ん中**に、絵＋文字のボタン。
+     選んだ道具の設定は**1段上**に出る。
+   ⚠️ 絵だけにしない（何の道具か分からない）。文字だけにもしない（小さくて押せない）。
+   ══════════════════════════════════════════════════════════════ */
+#bar{position:absolute;left:0;right:0;bottom:10px;z-index:6;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  pointer-events:none;}                     /* ★絵の操作を邪魔しない */
+#bar > *{pointer-events:auto;}
+
+/* 下の段：道具を選ぶ */
+#nav{display:flex;align-items:stretch;gap:2px;padding:5px 7px;
+  background:rgba(13,20,36,.94);border:1px solid #1e2a44;border-radius:12px;
+  box-shadow:0 6px 20px rgba(0,0,0,.45);}
+#nav button{display:flex;flex-direction:column;align-items:center;gap:2px;
+  min-width:62px;padding:6px 8px;background:none;border:1px solid transparent;
+  border-radius:8px;color:#a9bad8;font:inherit;cursor:pointer;}
+#nav button i{font-style:normal;font-size:17px;line-height:1;}
+#nav button span{font-size:11px;white-space:nowrap;}
+#nav button:hover{background:#16203a;color:#dce6f8;}
+/* ★選んでいる道具は青く塗る（いまどのモードか分からないと迷う）*/
+#nav button.on{background:#1d4ed8;border-color:#2f6fe0;color:#fff;}
+#nav .nsep{width:1px;margin:4px 5px;background:#1e2a44;}
+
+/* 上の段：選んだ道具の設定 */
+#opt{display:none;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;
+  max-width:min(96vw,900px);padding:6px 10px;
+  background:rgba(13,20,36,.94);border:1px solid #1e2a44;border-radius:10px;
+  box-shadow:0 4px 14px rgba(0,0,0,.4);}
+#opt.on{display:flex;}
+#opt .lb{font-size:12px;color:#7f92b5;}
+#opt .sep{width:1px;height:18px;background:#1e2a44;margin:0 3px;}
+#opt button{padding:5px 10px;font-size:12px;}
+#opt button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}
+#opt input[type=range]{width:170px;}
+#opt input[type=range]:disabled{opacity:.4;}
+
+/* ⚠️ スマホでは文字を落として絵だけにする（横に入らない）*/
+@media (max-width:640px){
+  #nav button{min-width:46px;padding:6px 5px;}
+  #nav button span{display:none;}
+  #opt input[type=range]{width:110px;}
+}
 </style>
 <style>
 /* 部品ツリー。★絵の上にかぶせる（画面を狭くしない）*/
@@ -148,6 +165,29 @@ a{color:var(--accent-hi)}
 </style>
 <main>
   <canvas id="cv"></canvas>
+  <!-- ══════════════════════════════════════════════════════════════
+       下のバー（AutoDesk と同じ置き方）
+       ★**絵＋文字**にする。文字だけの小さいボタンを横に並べると、
+         スマホで押せず、何の道具か分からない。
+       ★選んだ道具の**設定は1段上**に出す（出しっぱなしにしない）。
+       ⚠️ モデルを読むまで出さない。
+       ══════════════════════════════════════════════════════════════ -->
+  <div id="bar" style="display:none">
+    <!-- 上の段：選んだ道具の設定だけ -->
+    <div id="opt"></div>
+    <!-- 下の段：道具を選ぶ -->
+    <div id="nav">
+      <button data-t="home"><i>⌂</i><span>ホーム</span></button>
+      <button data-t="fit"><i>⛶</i><span>フィット</span></button>
+      <button data-t="pan"><i>✥</i><span>画面移動</span></button>
+      <button data-t="zoom"><i>⌕</i><span>ズーム</span></button>
+      <button data-t="orbit" class="on"><i>⟳</i><span>オービット</span></button>
+      <span class="nsep"></span>
+      <button data-t="view"><i>◳</i><span>向き</span></button>
+      <button data-t="sec"><i>◫</i><span>断面</span></button>
+      <button data-t="tree"><i>☰</i><span>モデル</span></button>
+    </div>
+  </div>
   <div id="tree">
     <div class="th"><b>部品ツリー</b><span class="sp"></span>
       <button id="trall" title="全部表示に戻します">全部表示</button>
@@ -308,9 +348,10 @@ async function draw(buf, kind, tAll){
   scene.add(g); model = g; fit();
   document.getElementById('fit').disabled = false;
   /* ★道具を出す（読むまでは押せないボタンを並べない）*/
-  document.getElementById('tools').style.display = '';
-  document.getElementById('treebtn').style.display = '';
+  document.getElementById('bar').style.display = 'flex';
+  document.getElementById('shot').style.display = '';
   treeShow(true);
+  navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
   secOn = false; secFlip = false;
   document.getElementById('secpos').value = 500;
   document.getElementById('secflip').classList.remove('on');
@@ -496,7 +537,9 @@ function secApply(){
                               : new THREE.Vector3(0, 0, 1);
   if (secFlip) nrm.negate();
   const lo = b.box.min[secAxis], hi = b.box.max[secAxis];
-  const t = (Number(posEl.value) || 0) / 1000;
+  /* ⚠️ スライダは「断面」を選んだときだけ在る。無いときは覚えている値を使う
+     （`secApply` はツリーの操作からも呼ばれる）*/
+  const t = (posEl ? (Number(posEl.value) || 0) : secPosVal) / 1000;
   const at = lo + (hi - lo) * t;
   /* 平面の式：n·x + d = 0。★`at` を通す */
   const pt = new THREE.Vector3(); pt[secAxis] = at;
@@ -531,46 +574,168 @@ function secApply(){
 }
 
 /** 断面の道具の見た目を合わせる */
+/** 断面の道具の見た目を合わせる。
+    ⚠️ **要素が無くても落ちないこと。** 設定の段は「断面」を選んだときだけ
+       作られるので、閉じている間はどれも居ない（`secApply` は常に走る）。 */
 function secSync(){
   const on = document.getElementById('secon');
-  if (on) on.classList.toggle('on', secOn);
-  if (on) on.textContent = secOn ? '切るのをやめる' : '切る';
-  document.querySelectorAll('#tools .sax').forEach(b => {
+  if (on) {
+    on.classList.toggle('on', secOn);
+    on.textContent = secOn ? '切るのをやめる' : '切る';
+  }
+  document.querySelectorAll('#opt .sax').forEach(b => {
     b.classList.toggle('on', secOn && b.getAttribute('data-s') === secAxis);
     b.disabled = !secOn;
   });
-  document.getElementById('secpos').disabled = !secOn;
-  document.getElementById('secflip').disabled = !secOn;
+  const ps = document.getElementById('secpos');
+  if (ps) ps.disabled = !secOn;
+  const fl = document.getElementById('secflip');
+  if (fl) { fl.disabled = !secOn; fl.classList.toggle('on', secFlip); }
 }
 
-/* ── 結線 ── */
-document.querySelectorAll('#tools [data-v]').forEach(b => {
-  b.addEventListener('click', () => viewTo(b.getAttribute('data-v')));
+/* ══════════════════════════════════════════════════════════════════════
+   下のバー（道具を選ぶ）と、その上の設定の段
+   ══════════════════════════════════════════════════════════════════════
+   ★AutoDesk と同じ操作感にする：
+     ① 下のバーで**道具を選ぶ**（いま何を選んでいるかが青で分かる）
+     ② 選んだ道具の**設定だけ**が1段上に出る（出しっぱなしにしない）
+     ③ 画面移動・ズーム・オービットは**左ドラッグの意味を変える**
+        （モードを選ぶ操作感。AutoDesk もこの形）
+   ⚠️ 設定の段の中身は**毎回組み直す**。ただし `secon` などの id は変えないので、
+      結線は `document` への委譲（下の `optBind`）でまとめて持つ。
+   ══════════════════════════════════════════════════════════════════════ */
+let navTool = 'orbit';
+
+/** 左ドラッグの意味を変える。★OrbitControls の割当を差し替える */
+function navMode(t){
+  if (t === 'pan')       controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+  else if (t === 'zoom') controls.mouseButtons.LEFT = THREE.MOUSE.DOLLY;
+  else                   controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+  /* ⚠️ スマホの1本指も合わせる（回すつもりで動かしてしまうのを防ぐ）*/
+  controls.touches.ONE = (t === 'pan') ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
+  /* カーソルで分かるようにする */
+  renderer.domElement.style.cursor =
+    t === 'pan' ? 'move' : t === 'zoom' ? 'zoom-in' : 'grab';
+}
+
+/** 設定の段（選んだ道具のぶんだけ）*/
+function optHtml(t){
+  if (t === 'view')
+    return '<span class="lb">見る向き</span>' +
+      '<button data-v="xy">XY 面</button><button data-v="yz">YZ 面</button>' +
+      '<button data-v="zx">ZX 面</button><button data-v="iso">等角</button>' +
+      '<button id="flipv" title="反対側から見ます">反対</button>' +
+      '<span class="sep"></span><span class="lb">回す</span>' +
+      '<button data-r="x-">⟲X</button><button data-r="x+">⟳X</button>' +
+      '<button data-r="y-">⟲Y</button><button data-r="y+">⟳Y</button>' +
+      '<button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>';
+  if (t === 'sec')
+    return '<button id="secon">切る</button>' +
+      '<span class="lb">面</span>' +
+      '<button data-s="x" class="sax">X</button><button data-s="y" class="sax">Y</button>' +
+      '<button data-s="z" class="sax">Z</button>' +
+      '<input type="range" id="secpos" min="0" max="1000" value="' + secPosVal + '">' +
+      '<span id="secval" class="lb">—</span>' +
+      '<button id="secflip" title="切る向きを反対にします">反転</button>';
+  return '';
+}
+
+let secPosVal = 500;        /* ★段を作り直しても位置を覚えておく */
+
+function navSet(t){
+  /* ★同じものを押したら設定の段を閉じる（トグル）。
+     ⚠️ ただしモード（画面移動・ズーム・オービット）は閉じない
+        — 「どれかが選ばれている」状態が常に要る */
+  const isMode = (t === 'pan' || t === 'zoom' || t === 'orbit');
+  if (t === 'home') { flipView = false; viewTo('iso'); return; }
+  if (t === 'fit')  { fit(); return; }
+  if (t === 'tree') { treeShow(!treeOpen); navSync(); return; }
+  if (!isMode && navTool === t) { navTool = 'orbit'; }
+  else navTool = t;
+  if (isMode) navMode(t);
+  else navMode('orbit');          /* 設定を出す道具のときは回せるままにする */
+  const opt = document.getElementById('opt');
+  const h = optHtml(navTool);
+  opt.innerHTML = h;
+  opt.classList.toggle('on', !!h);
+  if (navTool === 'sec') secSync();     /* ★作り直した段に今の状態を当てる */
+  if (navTool === 'view' && flipView) {
+    const f = document.getElementById('flipv');
+    if (f) f.classList.add('on');
+  }
+  navSync();
+}
+
+function navSync(){
+  document.querySelectorAll('#nav button').forEach(b => {
+    const t = b.getAttribute('data-t');
+    b.classList.toggle('on',
+      t === navTool || (t === 'tree' && treeOpen));
+  });
+}
+
+document.getElementById('nav').addEventListener('click', ev => {
+  const b = ev.target.closest ? ev.target.closest('button[data-t]') : null;
+  if (b) navSet(b.getAttribute('data-t'));
 });
-document.getElementById('flipv').addEventListener('click', () => {
-  flipView = !flipView;
-  document.getElementById('flipv').classList.toggle('on', flipView);
-});
-document.querySelectorAll('#tools [data-r]').forEach(b => {
-  b.addEventListener('click', () => {
+
+/* ⚠️ 設定の段は作り直すので、**document への委譲**で結線する
+   （作り直すたびに addEventListener し直すと二重に効く）*/
+document.getElementById('opt').addEventListener('click', ev => {
+  const b = ev.target.closest ? ev.target.closest('button') : null;
+  if (!b) return;
+  if (b.hasAttribute('data-v')) { viewTo(b.getAttribute('data-v')); return; }
+  if (b.hasAttribute('data-r')) {
     const v = b.getAttribute('data-r');
     spin(v[0], v[1] === '+' ? 15 : -15);
-  });
+    return;
+  }
+  if (b.id === 'flipv') {
+    flipView = !flipView;
+    b.classList.toggle('on', flipView);
+    return;
+  }
+  if (b.id === 'secon') { secOn = !secOn; secSync(); secApply(); return; }
+  if (b.classList.contains('sax')) {
+    secAxis = b.getAttribute('data-s'); secSync(); secApply(); return;
+  }
+  if (b.id === 'secflip') {
+    secFlip = !secFlip; b.classList.toggle('on', secFlip); secApply(); return;
+  }
 });
-document.getElementById('secon').addEventListener('click', () => {
-  secOn = !secOn; secSync(); secApply();
+document.getElementById('opt').addEventListener('input', ev => {
+  if (ev.target.id === 'secpos') { secPosVal = Number(ev.target.value) || 0; secApply(); }
 });
-document.querySelectorAll('#tools .sax').forEach(b => {
-  b.addEventListener('click', () => {
-    secAxis = b.getAttribute('data-s'); secSync(); secApply();
-  });
+
+navMode('orbit');
+
+/* ══════════════════════════════════════════════════════════════════════
+   スクリーンショット
+   ══════════════════════════════════════════════════════════════════════
+   ⚠️ **その場で描いてから取る。** `preserveDrawingBuffer` を付けていないので、
+      次のフレームでは消えていて `toDataURL` が真っ黒になる。
+   ★ここは GAS の iframe ではない普通のページなので `<a download>` が効く。
+   ⚠️ 部品ツリーや下のバーは HTML なので**絵には入らない**（3D だけ）。画面にそう書く。
+   ══════════════════════════════════════════════════════════════════════ */
+document.getElementById('shot').addEventListener('click', () => {
+  try {
+    renderer.render(scene, camera);            /* ★描いた直後に取る */
+    const uri = renderer.domElement.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = uri;
+    a.download = 'view_' + String(shotName || 'model').replace(/\.[^.]+$/, '') + '.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    log('スクリーンショットを保存しました（★3D だけです。道具やツリーは入りません）', 'ok');
+  } catch (e) {
+    log('✗ スクリーンショットを取れませんでした（' + String(e.message || e) + '）', 'ng');
+  }
 });
-document.getElementById('secpos').addEventListener('input', secApply);
-document.getElementById('secflip').addEventListener('click', () => {
-  secFlip = !secFlip;
-  document.getElementById('secflip').classList.toggle('on', secFlip);
-  secApply();
-});
+
+/* ★見る向き・回す・断面の結線は **`#opt` への委譲**で受けている（上）。
+   ⚠️ ここで個別に `addEventListener` していたものは**消した**。
+      設定の段は作り直すので、都度結線すると**二重に効く**（押すと2回動く）。
+   🔴 消す範囲を広げないこと。この下には**部品ツリーのコード**が続いている
+      （2026-08-24、まとめて消して `nodeToGroup` と `esc` を失った）。 */
 
 /* ══════════════════════════════════════════════════════════════════════
    組立の階層（ASSY）
@@ -723,7 +888,10 @@ function kindOf(name){
   if (/\.(igs|iges)$/.test(n)) return 'iges';
   return '';
 }
+/** ★スクリーンショットの名前に使う（読んだファイルの名前）*/
+let shotName = '';
 async function open(file){
+  shotName = String(file && file.name || '');
   if (busy) return;
   busy = true;
   document.getElementById('pick').disabled = true;
@@ -1082,14 +1250,20 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
       if (model) scene.remove(model);
       scene.add(g); model = g; fit();
       document.getElementById('fit').disabled = false;
-      document.getElementById('tools').style.display = '';
-      secOn = false; secFlip = false;
-      document.getElementById('secpos').value = 500;
+      document.getElementById('bar').style.display = 'flex';
+      document.getElementById('shot').style.display = '';
+      document.getElementById('ph').style.display = 'none';   /* 案内を隠す */
+      secOn = false; secFlip = false; secPosVal = 500;
+      navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
       secBuild(); secSync(); secApply();
     },
     setSec(on, axis, pos, flip) {
       secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;
-      if (pos !== undefined) document.getElementById('secpos').value = pos;
+      if (pos !== undefined) {
+        secPosVal = pos;
+        const ps = document.getElementById('secpos');
+        if (ps) ps.value = pos;
+      }
       secSync(); secApply();
     }
   };

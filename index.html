@@ -78,7 +78,7 @@ a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>STEP ビューア</h1><span class="tag">実験 · 0823g</span>
+  <h1>STEP ビューア</h1><span class="tag">実験 · 0824a</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -91,6 +91,40 @@ a{color:var(--accent-hi)}
   <button id="drv" style="display:none">Drive から</button>
   <button id="fit" disabled>全体</button>
 </header>
+<!-- ★2段目。モデルを読むまで隠す（押せないボタンを並べない）-->
+<div id="tools" style="display:none">
+  <span class="lb">見る向き</span>
+  <button data-v="xy">XY 面</button>
+  <button data-v="yz">YZ 面</button>
+  <button data-v="zx">ZX 面</button>
+  <button data-v="iso">等角</button>
+  <button id="flipv" title="反対側から見ます">反対</button>
+  <span class="sep"></span>
+  <span class="lb">回す</span>
+  <button data-r="x-">⟲X</button><button data-r="x+">⟳X</button>
+  <button data-r="y-">⟲Y</button><button data-r="y+">⟳Y</button>
+  <button data-r="z-">⟲Z</button><button data-r="z+">⟳Z</button>
+  <span class="sep"></span>
+  <span class="lb">断面</span>
+  <button id="secon">切る</button>
+  <button data-s="x" class="sax">X</button>
+  <button data-s="y" class="sax">Y</button>
+  <button data-s="z" class="sax">Z</button>
+  <input type="range" id="secpos" min="0" max="1000" value="500" disabled>
+  <span id="secval" class="lb">—</span>
+  <button id="secflip" disabled title="切る向きを反対にします">反転</button>
+</div>
+<style>
+/* 2段目の道具。★ヘッダと同じ見た目に寄せる（別画面のように見せない）*/
+#tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:7px 12px;background:#0d1424;border-bottom:1px solid #1e2a44;}
+#tools .lb{font-size:12px;color:#7f92b5;}
+#tools .sep{width:1px;height:20px;background:#1e2a44;margin:0 4px;}
+#tools button{padding:5px 9px;font-size:12px;}
+#tools button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff;}
+#tools input[type=range]{width:150px;}
+#tools input[type=range]:disabled{opacity:.4;}
+</style>
 <main>
   <canvas id="cv"></canvas>
   <div id="ph"><b>STEP を選んでください</b>
@@ -149,7 +183,12 @@ const sec = ms => (ms / 1000).toFixed(1) + ' 秒';
 
 /* ── 下地 ─────────────────────────────────────────────────── */
 const cv = document.getElementById('cv');
-const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+/* 🔴 **`stencil: true` を明示する。**
+   three.js は r163 から `stencil` の既定が **false** になった。
+   バッファが無いとステンシルテストが**常に通る**ので、
+   断面の蓋が**画面全体を覆う**（2026-08-24 にローカルで捕まえた）。
+   ⚠️ 既定に任せない。断面の蓋はこれが無いと成立しない。 */
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, stencil: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x080d18);
@@ -235,16 +274,231 @@ async function draw(buf, kind, tAll){
     tri += m.index.array.length / 3;
     const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2])
                         : new THREE.Color(0x9fb4cc);
-    g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      color: col, metalness: .15, roughness: .62, side: THREE.DoubleSide })));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: col, metalness: .15, roughness: .62, side: THREE.DoubleSide }));
+    /* ★蓋（renderOrder 3）より**後**に描く。three.js の clipping の例と同じ順。
+       ⚠️ 先に描くと蓋が上に乗って全部隠れる */
+    mesh.renderOrder = 6;
+    g.add(mesh);
   }
   if (model) scene.remove(model);
   scene.add(g); model = g; fit();
   document.getElementById('fit').disabled = false;
+  /* ★道具を出す（読むまでは押せないボタンを並べない）*/
+  document.getElementById('tools').style.display = '';
+  secOn = false; secFlip = false;
+  document.getElementById('secpos').value = 500;
+  document.getElementById('secflip').classList.remove('on');
+  secBuild(); secSync(); secApply();
   log('三角形 ' + tri.toLocaleString() + '　頂点 ' + vtx.toLocaleString());
   log('■ 合計 ' + sec(performance.now() - tAll) + '（読み込み＋変換＋描画）', 'ok');
   if (tri > 2000000) log('⚠️ 三角形が200万超。スマホでは重いはずです', 'wa');
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   見る向き（面・軸回転）
+   ══════════════════════════════════════════════════════════════════════
+   ★**カメラを動かす。モデルは回さない。**
+     断面の面はワールドに固定したいので、モデルを回すと
+     「部品に対してどこを切ったか」が分からなくなる。
+   ══════════════════════════════════════════════════════════════════════ */
+let flipView = false;      /* 反対側から見るか */
+
+/** モデルの中心と大きさ */
+function bbox(){
+  if (!model) return null;
+  const box = new THREE.Box3().setFromObject(model);
+  if (box.isEmpty()) return null;
+  return { box, c: box.getCenter(new THREE.Vector3()),
+           r: box.getSize(new THREE.Vector3()).length() / 2 || 1 };
+}
+
+/** 面に合わせて見る。xy → Z 軸方向から、yz → X 軸方向から、zx → Y 軸方向から */
+function viewTo(kind){
+  const b = bbox(); if (!b) return;
+  const d = b.r * 2.4, f = flipView ? -1 : 1;
+  const dir = kind === 'xy' ? new THREE.Vector3(0, 0, d * f)
+            : kind === 'yz' ? new THREE.Vector3(d * f, 0, 0)
+            : kind === 'zx' ? new THREE.Vector3(0, d * f, 0)
+            : new THREE.Vector3(1, .8, 1).setLength(d);
+  /* ⚠️ 真上・真下から見るときは up を変える（up と視線が平行だと絵が消える）*/
+  camera.up.set(0, 1, 0);
+  if (kind === 'zx') camera.up.set(0, 0, -1 * f);
+  controls.target.copy(b.c);
+  camera.position.copy(b.c).add(dir);
+  camera.near = b.r / 500; camera.far = b.r * 500;
+  camera.updateProjectionMatrix(); controls.update();
+}
+
+/** 軸のまわりにカメラを回す（度）*/
+function spin(axis, deg){
+  const b = bbox(); if (!b) return;
+  const ax = axis === 'x' ? new THREE.Vector3(1, 0, 0)
+           : axis === 'y' ? new THREE.Vector3(0, 1, 0)
+                          : new THREE.Vector3(0, 0, 1);
+  const v = camera.position.clone().sub(controls.target);
+  v.applyAxisAngle(ax, deg * Math.PI / 180);
+  camera.position.copy(controls.target).add(v);
+  /* ★up も一緒に回す（回すたびに絵が起き上がらないように）*/
+  camera.up.applyAxisAngle(ax, deg * Math.PI / 180).normalize();
+  controls.update();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   断面（セクション）
+   ══════════════════════════════════════════════════════════════════════
+   ★`clippingPlanes` で切る。
+   🔴 **切り口に蓋をする。** 蓋をしないと中が透けて**中空の殻**に見え、
+      断面図として読めない（AutoDesk の Viewer は蓋をしている）。
+      ⇒ three.js の定石（ステンシル）で塗る：
+        ① 裏面だけを描いてステンシルを +1（色は書かない）
+        ② 表面だけを描いてステンシルを −1
+        ③ ステンシルが 0 でない所＝**中身**なので、そこに平面を塗る
+   ⚠️ `renderer.localClippingEnabled = true` が要る。
+   ══════════════════════════════════════════════════════════════════════ */
+renderer.localClippingEnabled = true;
+
+const secPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+let secOn = false, secAxis = 'z', secFlip = false;
+let stencilGroup = null, capMesh = null;
+
+/** 蓋の材料。★片面だけ塗る（両面だと裏から見たとき手前に出る）*/
+function capMaterial(){
+  return new THREE.MeshStandardMaterial({
+    color: 0xff8a3d, metalness: .1, roughness: .8,
+    stencilWrite: true, stencilRef: 0,
+    stencilFunc: THREE.NotEqualStencilFunc,
+    stencilFail: THREE.ReplaceStencilOp,
+    stencilZFail: THREE.ReplaceStencilOp,
+    stencilZPass: THREE.ReplaceStencilOp,
+    clippingPlanes: []           /* ★蓋自身は切らない */
+  });
+}
+
+/** ステンシルに書くだけの材料（色は書かない）*/
+function stencilMaterial(side, op){
+  const m = new THREE.MeshBasicMaterial();
+  m.depthWrite = false; m.depthTest = false; m.colorWrite = false;
+  m.stencilWrite = true; m.stencilFunc = THREE.AlwaysStencilFunc;
+  m.side = side;
+  m.stencilFail = op; m.stencilZFail = op; m.stencilZPass = op;
+  m.clippingPlanes = [secPlane];
+  return m;
+}
+
+/** モデルを読み直したら作り直す */
+function secBuild(){
+  if (stencilGroup) { scene.remove(stencilGroup); stencilGroup = null; }
+  if (capMesh) { scene.remove(capMesh); capMesh = null; }
+  if (!model) return;
+  const b = bbox(); if (!b) return;
+
+  /* ①② ステンシルに中身を書く */
+  const g = new THREE.Group();
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    const back = new THREE.Mesh(o.geometry,
+      stencilMaterial(THREE.BackSide, THREE.IncrementWrapStencilOp));
+    const front = new THREE.Mesh(o.geometry,
+      stencilMaterial(THREE.FrontSide, THREE.DecrementWrapStencilOp));
+    back.renderOrder = 1; front.renderOrder = 2;
+    back.matrixAutoUpdate = false; front.matrixAutoUpdate = false;
+    o.updateWorldMatrix(true, false);
+    back.matrix.copy(o.matrixWorld); front.matrix.copy(o.matrixWorld);
+    g.add(back); g.add(front);
+  });
+  g.visible = false;
+  scene.add(g); stencilGroup = g;
+
+  /* ③ 蓋。★モデルより大きく作って、面に合わせて置く */
+  const size = b.r * 4;
+  capMesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMaterial());
+  capMesh.renderOrder = 3;
+  capMesh.visible = false;
+  /* ★蓋の裏側にモデルが描かれないように、少しだけ手前に出す */
+  capMesh.onAfterRender = function(r){ r.clearStencil(); };
+  scene.add(capMesh);
+  secApply();
+}
+
+/** 面の向きと位置を作る。★スライダは 0〜1000 を境界の間に写す */
+function secApply(){
+  const b = bbox();
+  const posEl = document.getElementById('secpos');
+  const valEl = document.getElementById('secval');
+  if (!b) { if (valEl) valEl.textContent = '—'; return; }
+  const nrm = secAxis === 'x' ? new THREE.Vector3(1, 0, 0)
+            : secAxis === 'y' ? new THREE.Vector3(0, 1, 0)
+                              : new THREE.Vector3(0, 0, 1);
+  if (secFlip) nrm.negate();
+  const lo = b.box.min[secAxis], hi = b.box.max[secAxis];
+  const t = (Number(posEl.value) || 0) / 1000;
+  const at = lo + (hi - lo) * t;
+  /* 平面の式：n·x + d = 0。★`at` を通す */
+  const pt = new THREE.Vector3(); pt[secAxis] = at;
+  secPlane.setFromNormalAndCoplanarPoint(nrm.clone().negate(), pt);
+
+  /* ★材料に面を当てる（`clippingPlanes` はモデル側の材料に持たせる）*/
+  model.traverse(o => { if (o.isMesh) {
+    o.material.clippingPlanes = secOn ? [secPlane] : [];
+    o.material.needsUpdate = true;
+  }});
+  if (stencilGroup) stencilGroup.visible = secOn;
+  if (capMesh) {
+    capMesh.visible = secOn;
+    /* 蓋を面に合わせる */
+    capMesh.position.copy(pt);
+    capMesh.lookAt(pt.clone().add(nrm));
+    /* ★ほんの少し内側へ（同じ位置だと自分自身に切られてちらつく）*/
+    capMesh.position.addScaledVector(nrm, -b.r * 1e-4);
+    capMesh.updateMatrixWorld();
+  }
+  if (valEl) valEl.textContent = secOn
+    ? (secAxis.toUpperCase() + ' = ' + at.toFixed(2))
+    : '切っていません';
+}
+
+/** 断面の道具の見た目を合わせる */
+function secSync(){
+  const on = document.getElementById('secon');
+  if (on) on.classList.toggle('on', secOn);
+  if (on) on.textContent = secOn ? '切るのをやめる' : '切る';
+  document.querySelectorAll('#tools .sax').forEach(b => {
+    b.classList.toggle('on', secOn && b.getAttribute('data-s') === secAxis);
+    b.disabled = !secOn;
+  });
+  document.getElementById('secpos').disabled = !secOn;
+  document.getElementById('secflip').disabled = !secOn;
+}
+
+/* ── 結線 ── */
+document.querySelectorAll('#tools [data-v]').forEach(b => {
+  b.addEventListener('click', () => viewTo(b.getAttribute('data-v')));
+});
+document.getElementById('flipv').addEventListener('click', () => {
+  flipView = !flipView;
+  document.getElementById('flipv').classList.toggle('on', flipView);
+});
+document.querySelectorAll('#tools [data-r]').forEach(b => {
+  b.addEventListener('click', () => {
+    const v = b.getAttribute('data-r');
+    spin(v[0], v[1] === '+' ? 15 : -15);
+  });
+});
+document.getElementById('secon').addEventListener('click', () => {
+  secOn = !secOn; secSync(); secApply();
+});
+document.querySelectorAll('#tools .sax').forEach(b => {
+  b.addEventListener('click', () => {
+    secAxis = b.getAttribute('data-s'); secSync(); secApply();
+  });
+});
+document.getElementById('secpos').addEventListener('input', secApply);
+document.getElementById('secflip').addEventListener('click', () => {
+  secFlip = !secFlip;
+  document.getElementById('secflip').classList.toggle('on', secFlip);
+  secApply();
+});
 
 /** 読める形か。★accept で絞れないので**ここで**見る（拡張子だけが手掛かり）*/
 function kindOf(name){
@@ -585,6 +839,41 @@ if (CFG.CLIENT_ID) {
   log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');
   log('　Drive から読むには OAuth のクライアントIDが要ります（config.js が空です）。');
   log('　いまは「STEP を選ぶ」から端末のファイルを選んでください。');
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ローカルでの動作確認の口
+   ══════════════════════════════════════════════════════════════════════
+   🔴 **localhost のときだけ作る。** 本番（GitHub Pages）では作らない
+      （内部を触れる口を公開しない）。
+   ★なぜ必要か：このページは **STEP を用意しないと何も確かめられない**。
+     カメラの向き・断面の切り方・蓋の描画は STEP と無関係なので、
+     ここから作った箱や円筒で**ローカルで測れる**ようにしておく。
+   ⚠️ 本番の動作を変えない（読むだけ／モデルを差し替えるだけ）。 */
+if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  window.__viewer = {
+    THREE, scene, camera, controls,
+    get model() { return model; },
+    get sec() { return { on: secOn, axis: secAxis, flip: secFlip,
+                         plane: secPlane, cap: capMesh, stencil: stencilGroup }; },
+    viewTo, spin, secApply, secBuild, bbox,
+    /** 試すモデルを入れる（STEP の代わり）*/
+    setModel(g) {
+      if (model) scene.remove(model);
+      scene.add(g); model = g; fit();
+      document.getElementById('fit').disabled = false;
+      document.getElementById('tools').style.display = '';
+      secOn = false; secFlip = false;
+      document.getElementById('secpos').value = 500;
+      secBuild(); secSync(); secApply();
+    },
+    setSec(on, axis, pos, flip) {
+      secOn = !!on; if (axis) secAxis = axis; if (flip !== undefined) secFlip = !!flip;
+      if (pos !== undefined) document.getElementById('secpos').value = pos;
+      secSync(); secApply();
+    }
+  };
+  log('（ローカルなので動作確認の口 window.__viewer を開けました）');
 }
 </script>
 </body></html>

@@ -252,10 +252,42 @@ a{color:var(--accent-hi)}
 #opt input[type=range]:disabled{opacity:.4;}
 
 /* ⚠️ スマホでは文字を落として絵だけにする（横に入らない）*/
-@media (max-width:640px){
+/* 🔴 **幅だけで判定しない**（2026-08-28）。
+   iPhone 15 Pro Max は **縦 430 / 横 932**。3D は横向きで見るので、
+   `max-width:640px` だけだと**横向きで一切効かず PC と同じ寸法**になる。
+   しかも横向きは**高さが 430px しかない**のに、道具と設定の2段が下に積まれる。
+   ⇒ `(pointer:coarse)`（指かどうか）と `(max-height:520px)`（低い画面）を併せて見る。 */
+@media (max-width:640px), (pointer:coarse), (max-height:520px){
   #nav button{min-width:46px;padding:6px 5px;}
   #nav button span{display:none;}
   #opt input[type=range]{width:110px;}
+  /* ★指のときは当たりを確保する（絵だけになるぶん、縦を詰めない）*/
+  #nav button{min-height:44px;justify-content:center;}
+  #nav button i{font-size:21px;}
+  /* 🔴 **道具は13個ある。折り返す。**（2026-08-28 に実測）
+     絵だけにしても 13 × 46px = **603px** で、縦向き（430px）には入らない。
+     ⚠️ 横スクロールにしない —— 隠れた道具は**在ることに気づけない**。
+     ★折り返せば、縦向きは2段・横向き（932px）は1段に自然に収まる。 */
+  #nav{flex-wrap:wrap;justify-content:center;max-width:96vw;}
+  #nav .nsep{display:none;}          /* ⚠️ 折り返すと区切りの位置が意味を失う */
+  #bar{bottom:max(6px, env(safe-area-inset-bottom));gap:4px;}
+  #opt{max-width:96vw;padding:5px 8px;}
+  #opt button{min-height:36px;}
+}
+/* 🔴 **引き出し**（2026-08-28。本人の指摘「メニューが絵に被る」）。
+   ふだんは出しておく（道具が見えないと何もできない）が、
+   **取っ手を押すと畳めて、モデルを丸ごと見られる**ようにする。
+   ⚠️ 畳んでも取っ手だけは残す（戻せなくならない）。 */
+#barpull{align-self:center;min-width:64px;height:22px;min-height:0;padding:0;
+  display:none;align-items:center;justify-content:center;
+  background:rgba(13,20,36,.94);border:1px solid #1e2a44;border-radius:11px;
+  color:#8fa3c6;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.4);}
+#barpull::before{content:'';width:26px;height:3px;border-radius:2px;background:#4a5f8c;}
+#bar.hid #nav,#bar.hid #opt{display:none;}
+#bar.hid #barpull{transform:rotate(180deg);}
+/* ★取っ手は指のときだけ出す（PC はマウスで避けられるので要らない）*/
+@media (pointer:coarse), (max-height:520px){
+  #barpull{display:flex;}
 }
 </style>
 <style>
@@ -277,6 +309,33 @@ a{color:var(--accent-hi)}
 #tree .tn{overflow:hidden;text-overflow:ellipsis;}
 #tree .tc{margin-left:auto;color:#6f80a3;font-size:13px;flex:none;}
 #treebtn{display:none;}
+/* 🔴 **指のときは「下から出るシート」にする**（2026-08-28。本人の指摘）。
+   ⚠️ 上下いっぱいの横パネルは、430px 幅の画面で
+      **ツリー 290px = 67% / 突き合わせ 330px = 77%** を覆ってしまう。
+   ★PC の作りは変えない（左右に出すのは PC では正しい）。
+   ⚠️ ツリーと突き合わせを**同時に2枚出さない**（下で片方を閉じる）。 */
+@media (pointer:coarse), (max-height:520px){
+  /* 🔴 **`position:fixed` にする**（2026-08-28 に実測して直した）。
+     `absolute` のままだと**親の下端**に付くので、親が画面いっぱいでないときに
+     シートが**上のほうに出た**（実測：横 932×430 で top=39px）。
+     ★浮かせるものは画面に対して固定する —— plm-gas でも同じ所で踏んでいる
+     （`.cdlg-b` の中の候補一覧）。 */
+  #tree,#bom{position:fixed;left:0;right:0;top:auto;bottom:0;width:auto;
+    height:min(58vh,420px);border-radius:12px 12px 0 0;
+    border-left:0;border-right:0;border-bottom:0;
+    padding-bottom:env(safe-area-inset-bottom);
+    box-shadow:0 -8px 24px rgba(0,0,0,.5);}
+  /* ★掴む所（見た目の取っ手）。押す所は見出しの ✕ のまま（誤操作を増やさない）*/
+  #tree .th,#bom .th{position:relative;padding-top:14px;}
+  #tree .th::before,#bom .th::before{content:'';position:absolute;left:50%;top:5px;
+    width:34px;height:3px;margin-left:-17px;border-radius:2px;background:#3a4d75;}
+  #tree .th button,#bom .th button{min-height:36px;}
+  /* ★シートが出ている間は道具のバーを畳む（二重に被らせない）。
+     🔴 **`!important` が要る。** `#bar` の display は**アプリが inline で書いている**
+     （読み込みが済むと `bar.style.display='flex'`）ので、素の規則では勝てない
+     （2026-08-28 に実測：`display` が `flex` のままだった）。 */
+  body.sheet #bar{display:none!important;}
+}
 /* E-BOM 突き合わせ。★ツリーの反対側（右）に出す。両方開けるようにする */
 #bom{position:absolute;right:10px;top:10px;bottom:10px;width:330px;z-index:5;
   display:none;flex-direction:column;background:rgba(8,13,24,.92);
@@ -349,6 +408,9 @@ a{color:var(--accent-hi)}
        ⚠️ モデルを読むまで出さない。
        ══════════════════════════════════════════════════════════════ -->
   <div id="bar" style="display:none">
+    <!-- ★取っ手。指のときだけ出て、押すと道具の段を畳む（モデルを丸ごと見る用）。
+         ⚠️ 畳んでも取っ手は残す（戻せなくならない）。 -->
+    <button id="barpull" title="道具を畳む / 出す" aria-label="道具を畳む / 出す"></button>
     <!-- 上の段：選んだ道具の設定だけ -->
     <div id="opt"></div>
     <!-- 下の段：道具を選ぶ -->
@@ -1969,7 +2031,10 @@ document.getElementById('bmclose').addEventListener('click', () => {
 function bomShow(on){
   bomOpen = !!on;
   document.getElementById('bom').style.display = bomOpen ? 'flex' : 'none';
-  if (bomOpen) document.getElementById('bmtx').focus();
+  /* ⚠️ 指のときは focus すると**キーボードが出てシートを押し上げる**ので当てない */
+  if (bomOpen && !sheetMode()) document.getElementById('bmtx').focus();
+  if (bomOpen && sheetMode() && typeof treeShow === 'function' && treeOpen) treeShow(false);
+  if (typeof sheetSync === 'function') sheetSync();
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -3896,9 +3961,27 @@ function treeShow(on){
   treeOpen = !!on;
   document.getElementById('tree').style.display = treeOpen ? 'flex' : 'none';
   if (treeOpen) treeRender();
+  /* ★指のときは下から出るシートなので、**もう片方を閉じる**（2枚重ねない）*/
+  if (treeOpen && sheetMode() && typeof bomShow === 'function' && bomOpen) bomShow(false);
+  sheetSync();
+}
+/* 🔴 指の画面か（＝パネルが「下から出るシート」になっているか）。
+   ⚠️ CSS の媒体クエリと**同じ条件**を書く。片方だけ直すと食い違う。 */
+function sheetMode(){
+  return window.matchMedia &&
+    window.matchMedia('(pointer:coarse), (max-height:520px)').matches;
+}
+/* ★シートが出ている間は道具のバーを畳む（下で二重に被らない）*/
+function sheetSync(){
+  var on = sheetMode() && (treeOpen || bomOpen);
+  document.body.classList.toggle('sheet', !!on);
 }
 
 document.getElementById('treebtn').addEventListener('click', () => treeShow(!treeOpen));
+/* ★取っ手：道具の段を畳む / 出す。⚠️ 覚えない（次に開いたら出ている状態から始める）*/
+document.getElementById('barpull').addEventListener('click', () => {
+  document.getElementById('bar').classList.toggle('hid');
+});
 document.getElementById('trclose').addEventListener('click', () => treeShow(false));
 document.getElementById('trall').addEventListener('click', () => {
   if (!model) return;

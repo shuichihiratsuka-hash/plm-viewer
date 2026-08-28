@@ -167,6 +167,17 @@ footer.fold{--fh:0px;}
 .ok{color:var(--ok)} .ng{color:var(--ng)} .wa{color:var(--wa)}
 .lic{margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--line);
   font-size:12px;color:var(--ink3);line-height:1.7}
+/* 🔴 **指のときは下の帯を詰める**（2026-08-28）。
+   ⚠️ ライセンスの**文は削らない**（表示が義務）。詰めるのは字と行間だけ。
+   ★畳んでいる間は「測るもの：…」の長い見出しも出さない
+     （ログが出ていないのに、何を測るかの説明だけ残っても読む理由が無い）。 */
+@media (pointer:coarse), (max-height:520px){
+  .lic{margin-top:.35rem;padding-top:.35rem;font-size:11px;line-height:1.45;}
+  footer.fold .hd > span:first-child{display:none;}
+  footer{padding:0 .6rem calc(.3rem + env(safe-area-inset-bottom));}
+  .hd{font-size:12.5px;}
+  footer .hd button{padding:3px 10px;min-height:30px;}
+}
 a{color:var(--accent-hi)}
 </style>
 </head><body>
@@ -619,10 +630,17 @@ function ftFold(on){
   try { localStorage.setItem(FF_KEY, on ? '1' : '0'); } catch (e) {}
 }
 (function ftInit(){
-  let h = 56, f = false;
+  /* 🔴 **指の画面は既定で畳む**（2026-08-28。本人の指摘
+     「下のコメント欄と宣言の表示を縮められない？」）。
+     ログは**測るための欄**なので、モデルを見ている間は要らない。
+     ⚠️ 一度でも自分で開け閉めしたら、その選択を守る（覚えているものは上書きしない）。
+     ⚠️ ライセンスの表示は**畳んでも消えない**（表示が義務）。 */
+  const coarse = !!(window.matchMedia &&
+    window.matchMedia('(pointer:coarse), (max-height:520px)').matches);
+  let h = 56, f = coarse;
   try {
     const a = localStorage.getItem(FH_KEY); if (a !== null) h = Number(a) || 56;
-    f = localStorage.getItem(FF_KEY) === '1';
+    const v = localStorage.getItem(FF_KEY); if (v !== null) f = (v === '1');
   } catch (e) {}
   ftSet(h); ftFold(f);
 })();

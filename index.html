@@ -83,6 +83,7 @@ h1{margin:0;font-size:16px;font-weight:700;white-space:nowrap}
 .tag{font-family:var(--mono);font-size:11.5px;color:var(--ink3);border:1px solid var(--line);
   border-radius:999px;padding:.1em .6em}
 .sp{flex:1}
+#hmore{display:none;min-width:44px;padding:0 .6rem;}
 button{font-family:var(--font);font-size:15px;border-radius:9px;cursor:pointer;
   border:1px solid var(--line);background:var(--raise);color:var(--ink2);
   min-height:44px;padding:0 1rem}
@@ -171,18 +172,50 @@ footer.fold{--fh:0px;}
    ⚠️ ライセンスの**文は削らない**（表示が義務）。詰めるのは字と行間だけ。
    ★畳んでいる間は「測るもの：…」の長い見出しも出さない
      （ログが出ていないのに、何を測るかの説明だけ残っても読む理由が無い）。 */
+/* 🔴 **指の画面はヘッダも絵の面積を食う**（2026-08-28 に実測）。
+   横向き 932×430 では ヘッダ 64px ＋ 下の帯 75px ＝ **139px（32%）**が枠で、
+   モデルに残るのは 291px しかない。本人の指示「できるだけ、モデル表示の空間を作って」。
+   ⇒ 版の印を落とし、上下の余白を詰め、**読んだあとは「⋯」に畳む**。
+   ⚠️ 消さずに畳む理由は #hmore の所に書いた（細かさは開く前に触れないと意味が無い）。 */
 @media (pointer:coarse), (max-height:520px){
-  .lic{margin-top:.35rem;padding-top:.35rem;font-size:11px;line-height:1.45;}
-  footer.fold .hd > span:first-child{display:none;}
+  header{padding:calc(.35rem + env(safe-area-inset-top)) .6rem .35rem;gap:.4rem;}
+  h1{font-size:15px;}
+  .tag{display:none;}
+  header button{min-height:40px;padding:0 .8rem;}
+  body.hasmodel #hmore{display:inline-flex;}
+  body.hasmodel #bgw,body.hasmodel #lvw,body.hasmodel #shot{display:none;}
+  body.hasmodel.hadv #bgw,body.hasmodel.hadv #lvw,
+  body.hasmodel.hadv #shot{display:inline-flex;}
+  body.hasmodel.hadv #hmore{background:#1d4ed8;border-color:#2f6fe0;color:#fff;}
+}
+@media (pointer:coarse), (max-height:520px){
+  .lic{margin-top:.3rem;padding-top:.3rem;font-size:10.5px;line-height:1.4;}
+  /* ⚠️ 長い凡例（測るもの：…）は指の画面では出さない。
+     ホバーが無いので説明を欄の外へ逃がせず、幅も足りない（2段に折り返す）。
+     ★記録そのものは開けば読める。 */
+  .hd > span:first-child{display:none;}
   footer{padding:0 .6rem calc(.3rem + env(safe-area-inset-bottom));}
   .hd{font-size:12.5px;}
   footer .hd button{padding:3px 10px;min-height:30px;}
+  /* 🔴 **畳んでいる間は「消す」を出さない**（2026-08-28。本人の指摘
+     「下部の『消す』ボタンが邪魔してコメント欄が閉じないね」）。
+     ⚠️ 「消す」（ログを消す）と「▾」（畳む）が同じ大きさで隣り合っていて、
+        しかも畳んでいる間は**消す対象が見えていない**。
+        押しても何も起きたように見えないので「閉じない」と読まれる。
+     ⇒ 開いているときだけ出す。畳んでいる間は▾だけにする。 */
+  footer.fold #fclr{display:none;}
+  /* ★見出しの帯そのものを押して開け閉めできるようにする（当たりを大きく取る）*/
+  .hd{cursor:pointer;}
+  footer .hd #ftog{min-width:52px;}
+  /* ⚠️ 掴んで高さを変えるのはマウスの作法。指では▾で足りるうえ、
+     ▾のすぐ上にある**細い帯が誤爆の的**になる。 */
+  #fgrip{display:none;}
 }
 a{color:var(--accent-hi)}
 </style>
 </head><body>
 <header>
-  <h1>3D ビューア</h1><span class="tag">実験 · 0825m</span>
+  <h1>3D ビューア</h1><span class="tag">実験 · 0828m</span>
   <span class="sp"></span>
   <!-- 🔴 **accept を付けないこと。**
        iOS は accept を **UTI の一覧に翻訳**するが、`.stp` / `.step` には
@@ -193,6 +226,13 @@ a{color:var(--accent-hi)}
   <input type="file" id="f" style="display:none">
   <button class="pri" id="pick">ファイルを選ぶ</button>
   <button id="drv" style="display:none">Drive から</button>
+  <!-- ★指の画面でモデルを読んだあとだけ出る「⋯」。
+       🔴 **消すのではなく畳む。** 本人の指摘（2026-08-28）
+       「上部バーのスクリーンショットっているかな？」「細かさも開いた後じゃいらないよね？」
+       ⇒ 読んだあとは要らないので隠すが、**無くすと戻せない**
+         （細かさは「次に開くとき」に効くので、開く前に触れないと意味が無い）。 -->
+  <button id="hmore" title="白背景・細かさ・スクリーンショットを出します"
+    aria-label="その他の設定">⋯</button>
   <!-- ★上は「入口」と「持ち出し」だけ。見る道具は**下のバー**に移した
        （AutoDesk と同じ置き方。上に全部並べると小さくて押せない）-->
   <!-- ★手順書に貼るとき用。**既定は暗い色**、押すと純白 -->
@@ -271,6 +311,16 @@ a{color:var(--accent-hi)}
 @media (max-width:640px), (pointer:coarse), (max-height:520px){
   #nav button{min-width:46px;padding:6px 5px;}
   #nav button span{display:none;}
+  /* 🔴 **「開くもの」の2つだけ文字を残す**（2026-08-28。本人の指摘
+     「部品ツリーを閉じたら再度開けない？」）。
+     ⚠️ 絵だけにすると `☰` と `⇄` が何を開く印なのか**見て分からない**。
+        道具（回す・測る）は押せば結果が絵に出るので絵だけでよいが、
+        **閉じたものを開き直す入口**は、字が無いと戻れなくなる。
+     ★2つだけなので折り返しの段数は変わらない（実測：横 932px は1段のまま）。 */
+  #nav button[data-t="tree"] span,#nav button[data-t="bom"] span{
+    display:inline;font-size:10.5px;line-height:1.1;}
+  #nav button[data-t="tree"],#nav button[data-t="bom"]{
+    flex-direction:column;gap:1px;min-width:56px;}
   #opt input[type=range]{width:110px;}
   /* ★指のときは当たりを確保する（絵だけになるぶん、縦を詰めない）*/
   #nav button{min-height:44px;justify-content:center;}
@@ -331,11 +381,27 @@ a{color:var(--accent-hi)}
      シートが**上のほうに出た**（実測：横 932×430 で top=39px）。
      ★浮かせるものは画面に対して固定する —— plm-gas でも同じ所で踏んでいる
      （`.cdlg-b` の中の候補一覧）。 */
-  #tree,#bom{position:fixed;left:0;right:0;top:auto;bottom:0;width:auto;
-    height:min(58vh,420px);border-radius:12px 12px 0 0;
-    border-left:0;border-right:0;border-bottom:0;
+  /* 🔴 **左端を空ける**（2026-08-28。本人の指摘
+     「左からフリックしちゃうと、前ページに戻っちゃう」）。
+     iOS Safari は**画面の左端から右への払い**を「前のページへ戻る」に使う。
+     シートを左端まで伸ばすと、その帯の上で指を動かすたびに戻ってしまう。
+     ⇒ **右に寄せて、左に canvas の帯を残す**（戻る払いはモデルの上で起きる）。
+     ⚠️ 幅いっぱいに戻さないこと。⚠️ 全高の横パネルにも戻さないこと
+        （430px 幅では 67〜77% を覆う。だから下から出す形にしてある）。 */
+  #tree,#bom{position:fixed;left:auto;right:0;top:auto;bottom:0;
+    width:min(88vw,420px);
+    height:min(58vh,420px);border-radius:12px 0 0 0;
+    border-right:0;border-bottom:0;
     padding-bottom:env(safe-area-inset-bottom);
-    box-shadow:0 -8px 24px rgba(0,0,0,.5);}
+    box-shadow:-6px -8px 24px rgba(0,0,0,.5);
+    /* ★右から入ってくるのが見えるようにする（どこから出たかが分かる）*/
+    animation:sheetin .18s ease-out;}
+  @keyframes sheetin{from{transform:translateX(18%);opacity:.3}
+                     to{transform:translateX(0);opacity:1}}
+  /* ⚠️ 動きを減らす設定の人には動かさない（位置が動く演出は避ける作法）*/
+  @media (prefers-reduced-motion:reduce){
+    #tree,#bom{animation:none;}
+  }
   /* ★掴む所（見た目の取っ手）。押す所は見出しの ✕ のまま（誤操作を増やさない）*/
   #tree .th,#bom .th{position:relative;padding-top:14px;}
   #tree .th::before,#bom .th::before{content:'';position:absolute;left:50%;top:5px;
@@ -482,9 +548,13 @@ a{color:var(--accent-hi)}
   <div id="fgrip" title="上下にドラッグして高さを変えられます"></div>
   <div class="hd">
     <span>測るもの：<b>WASM の読み込み</b>／<b>変換</b>／<b>三角形の数</b>／<b>合計</b></span>
-    <span class="sp"></span>
+    <!-- 🔴 **「消す」は左、「閉じる」は右**（2026-08-28。本人の指摘
+         「下部の『消す』ボタンが邪魔してコメント欄が閉じないね」）。
+         同じ大きさで隣り合っていたので、閉じるつもりで「消す」を押していた。
+         ⇒ 離して置き、閉じる側は**字で何をするか書く**（▾ だけにしない）。 -->
     <button id="fclr" title="ログを消します">消す</button>
-    <button id="ftog" title="畳む／開く">▾</button>
+    <span class="sp"></span>
+    <button id="ftog" title="畳む／開く">▾ 閉じる</button>
   </div>
   <div id="log">（まだ何も読み込んでいません）</div>
   <!-- 🔴 ライセンスは**畳む対象の外**（表示が義務。畳んでも消さない）-->
@@ -626,7 +696,9 @@ function ftSet(h){
 function ftFold(on){
   FT.classList.toggle('fold', !!on);
   const b = document.getElementById('ftog');
-  if (b) { b.textContent = on ? '▴' : '▾'; b.title = on ? '開く' : '畳む'; }
+  /* ⚠️ 記号だけにしない。「▾」と「消す」が並ぶと、閉じるつもりで消すを押す */
+  if (b) { b.textContent = on ? '▴ 開く' : '▾ 閉じる';
+           b.title = on ? '記録の欄を開きます' : '記録の欄を畳みます'; }
   try { localStorage.setItem(FF_KEY, on ? '1' : '0'); } catch (e) {}
 }
 (function ftInit(){
@@ -647,6 +719,21 @@ function ftFold(on){
 
 document.getElementById('ftog').addEventListener('click',
   () => ftFold(!FT.classList.contains('fold')));
+/* ★見出しの帯のどこを押しても開け閉めできる（指の当たりを大きく取る）。
+   ⚠️ ボタン（消す・▾）の上は素通しにする（二重に効いて元へ戻ってしまう）。
+   ⚠️ ライセンスの中のリンクは `.hd` の外なので巻き込まれない。 */
+if (window.matchMedia &&
+    window.matchMedia('(pointer:coarse), (max-height:520px)').matches) {
+  /* ⚠️ 指のときだけ。PC で帯ごと押せると、凡例の文字を選ぼうとして畳んでしまう */
+  FT.querySelector('.hd').addEventListener('click', ev => {
+    if (ev.target.closest && ev.target.closest('button')) return;
+    ftFold(!FT.classList.contains('fold'));
+  });
+}
+/* ★ヘッダの「⋯」。読んだあとに畳んだ設定（白背景・細かさ・撮影）を出し入れする */
+document.getElementById('hmore').addEventListener('click', () => {
+  document.body.classList.toggle('hadv');
+});
 document.getElementById('fclr').addEventListener('click', () => {
   lines = []; logEl.innerHTML = '（消しました）';
 });
@@ -1065,7 +1152,13 @@ function finishModel(g, tAll, tri){
   document.getElementById('bgw').style.display = '';
   /* 🔴 **突き合わせの結果は持ち越さない。** 別のモデルの結果が残ると誤読する */
   bomClear(); bomShow(false);
-  treeShow(true);
+  /* 🔴 **指のときは自動で開かない**（2026-08-28。本人の指摘
+     「3Dビューワーをスマホで開くと部品ツリーが最初に出る」）。
+     指ではシートが画面の 58% を覆うので、**読んだばかりのモデルが見えない**。
+     ⇒ 開くのは PC だけ。指では下のバーの「モデル」から開く。 */
+  treeShow(!sheetMode());
+  /* ★ヘッダを畳める状態にする（指のときだけ CSS が効く）*/
+  document.body.classList.add('hasmodel');
   navTool = 'orbit'; navMode('orbit'); navSet('orbit'); navSync();
   toolsReset();          /* ★前のモデルの計測と分解を持ち越さない */
   /* 🔴 **段の中の部品を直に触らない。**

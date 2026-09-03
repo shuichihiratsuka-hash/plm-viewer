@@ -5609,7 +5609,7 @@ async function openDrive(id){
     log('ファイル：' + esc(info.name) + '　' + (info.size ? mb(+info.size) : 'サイズ不明'));
     const kind = kindOf(info.name);
     if (!kind) {
-      driveOut(id, 'この形式は回せません（' + info.name + '）');
+      driveOut(id, 'この形式は回せません（' + esc(info.name) + '）');
       return;
     }
     /* 🔴 **落とす前に断る。** 2.29GB を落としてから失敗するのは、

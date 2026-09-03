@@ -5637,6 +5637,15 @@ async function openDrive(id){
       return;
     }
     const info = await meta.json();
+    /* 🔴 **読んだファイルの名前をここで覚える**（2026-09-04）。
+       ⚠️ `open(file)` は1行目で入れているのに、**この道（`#id=`）だけ入れていなかった**。
+          ⇒ 抽出の `META.src_file_name` が空 → `root_label` も空 →
+            書き先のフォルダとスプシが **`STEPIN_model_…`** に落ち、
+            plm 側の一覧の見出し（`src_file_name`）も `ss.getName()` に倒れていた（実測）。
+       ★入れる先は **`shotName` の1つだけ**（「読んだファイルの名前」を2か所に持たない）。
+       ⚠️ ふだんの道への影響は**保存する絵と GLB の名前**だけ（`model` → 実際の名前）。
+          パネルも読み直しも増えない。 */
+    shotName = String(info.name || '');
     log('ファイル：' + esc(info.name) + '　' + (info.size ? mb(+info.size) : 'サイズ不明'));
     const kind = kindOf(info.name);
     if (!kind) {
@@ -6131,6 +6140,22 @@ function exFileName(pl){
   return EX_PREFIX + label + '_' + stamp;
 }
 
+/** 書き先のフォルダの名前。★**素の STEP のファイル名**（拡張子は落とす）。
+    🔴 **`STEPIN_` を付けない。** あれは**スプシの名前**が plm の探す鍵で、
+       フォルダは plm の `_siWalkFiles` が**再帰で降りる**ので名前は自由（設計書 §5）。
+    ★フォルダ名は plm の一覧の「場所」の列に出る ⇒ **人が読める名前**にする。
+    ⚠️ 時刻を付けない —— 同じ STEP を読み直したら**同じフォルダへ入れる**ため
+       （付けると回のたびにフォルダが増える）。
+    ⚠️ 名前が取れないときだけスプシと同じ名前に倒す（**空のフォルダ名を作らない**）。 */
+function exFolderName(pl){
+  const base = String((pl && pl.meta && pl.meta.src_file_name) || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim().slice(0, 120).trim();
+  return (base && !/^\.+$/.test(base)) ? base : exFileName(pl);
+}
+
 /* ── サムネ ────────────────────────────────────────────────────────
    ★plm 側は**サムネを見ながら部番を埋める**（実測 41.8% が未採番）。
      だから絵は「あると嬉しい」ではなく**この機能の要**。
@@ -6217,8 +6242,10 @@ async function exUpload(name, dataUrl, tk, parent){
 }
 /** 取り込みファイル（スプレッドシート）を作って中身を書く */
 async function exSheet(pl, tk, name){
-  /* ★フォルダと**同じ名前**にする（どの回のものか照合しやすい）。
-     🔴 `STEPIN_` の接頭辞は**このスプシの名前**が plm の探す鍵。 */
+  /* 🔴 `STEPIN_` の接頭辞は**このスプシの名前**が plm の探す鍵（設計書 §5）。
+     ⚠️ **フォルダとは名前が違う**（フォルダは素の STEP 名・時刻なし／
+        スプシは `STEPIN_<名前>_<時刻>`）。★同じ STEP を読み直すと
+        **同じフォルダの中にスプシが1本増える**＝回ごとの抽出が並ぶ。 */
   const title = name || exFileName(pl);
   const hd = { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/json' };
   const cr = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
@@ -6316,25 +6343,81 @@ function exPickSet(id){
   try { localStorage.setItem(EX_PICK_KEY, String(id)); } catch (e) { /* 覚えなくても動く */ }
 }
 
-/** 今回の書き先（`STEPIN_<STEPファイル名>` のフォルダ）を用意する。
-    ★中に作るので、親は `out=` か「選んだフォルダ」のどちらか。 */
+/** 同じ名前のフォルダを探す。
+    🔴 **「0件」と「分からない」を分ける。** `drive.file` の検索に出るのは
+       **このページが作った／開いたもの**だけなので、**0件は「無い」とは限らない**
+       （別の人が作った同名のフォルダは見えない）。⇒ `unsure` で返して**呼ぶ側が言う**。
+    @return {{id:string, unsure:boolean, why:string}} */
+async function exFindFolder(name, parent, tk){
+  /* ⚠️ 検索語のエスケープは **`\` を先に**（後にすると付けた `\` をまた escape する）*/
+  const q = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const term = "mimeType='application/vnd.google-apps.folder' and trashed=false" +
+    " and name='" + q(name) + "'" +
+    (parent ? " and '" + q(parent) + "' in parents" : '');
+  try {
+    const r = await fetch('https://www.googleapis.com/drive/v3/files' +
+      '?fields=files(id,name)&pageSize=10&q=' + encodeURIComponent(term),
+      { headers: { Authorization: 'Bearer ' + tk } });
+    if (!r.ok) return { id: '', unsure: true, why: '（' + r.status + '）' + (await exErr(r)) };
+    const fs = (await r.json()).files || [];
+    return { id: (fs[0] || {}).id || '', unsure: false, why: '' };
+  } catch (e) {
+    return { id: '', unsure: true, why: (e && e.message) || String(e) };
+  }
+}
+
+/** その親の中に「この名前」のフォルダを用意する。
+    ⚠️ **同名のフォルダを2つ作らない**（先に探して、在れば使い回す）。
+    🔴 探せなかったときは**「無い」と決めつけない** —— 作りはするが `unsure` を返し、
+       呼ぶ側が「同じ名前が既に在るかは確かめられなかった」と**言う**（黙って重ねない）。 */
+async function exSubFolder(name, parent, tk){
+  const f = await exFindFolder(name, parent, tk);
+  if (f.id) return { id: f.id, reused: true, unsure: false, why: '' };
+  try {
+    return { id: await exMkFolder(name, parent, tk),
+             reused: false, unsure: f.unsure, why: f.why };
+  } catch (e) {
+    return { id: '', reused: false, unsure: f.unsure, why: (e && e.message) || String(e) };
+  }
+}
+
+/** 今回の書き先（**`out=` の直下に「STEP のファイル名」のフォルダ**）を用意する。
+    ★中に作るので、親は `out=` か「選んだフォルダ」のどちらか。
+    🔴 **順番が決めごと**：
+      ① `out=` の中に `<STEP名>` のフォルダ（★これが本来の姿）
+      ② 覚えている「選んだフォルダ」の中に `<STEP名>` のフォルダ
+      ③ **フォルダが作れなくても行き止まりにしない** —— `out=` の**直下そのもの**へ置く
+      ④ どれも駄目なら My Drive（リンクと移し方は呼ぶ側が出す）
+    ⚠️ ③を②より**後**に置く（②は本人が実測で通した道。先に返すと殺してしまう）。 */
 async function exDest(name, tk){
   exDestWhy = '';
   const why = [];
+  let unsure = false;
   if (exOut) {
-    try { return { id: await exMkFolder(name, exOut, tk), where: 'out', parent: exOut }; }
-    catch (e) { why.push('取り込みフォルダ' + ((e && e.message) || '')); }
+    const r = await exSubFolder(name, exOut, tk);
+    if (r.unsure) unsure = true;
+    if (r.id) return { id: r.id, where: 'out', parent: exOut, sub: name,
+                       reused: r.reused, unsure: unsure };
+    why.push('取り込みフォルダの中にフォルダを作れませんでした' + (r.why || ''));
   } else {
     why.push('取り込みフォルダ（out）が渡されていません');
   }
   const pick = exPickGet();
   if (pick) {
-    try { return { id: await exMkFolder(name, pick, tk), where: 'pick', parent: pick }; }
-    catch (e) { why.push('選んだフォルダ' + ((e && e.message) || '')); }
+    const r = await exSubFolder(name, pick, tk);
+    if (r.unsure) unsure = true;
+    if (r.id) return { id: r.id, where: 'pick', parent: pick, sub: name,
+                       reused: r.reused, unsure: unsure };
+    why.push('選んだフォルダの中にフォルダを作れませんでした' + (r.why || ''));
   }
-  /* 🔴 行き止まりにしない —— 親なしで進め、在り処と直し方は呼び出し側が出す */
   exDestWhy = why.join(' / ');
-  return { id: '', where: 'none', parent: '' };
+  /* ③ フォルダは作れなかったが、`out=` そのものへは置けるかもしれない（未実測）。
+     ⚠️ ここで置けなくても絵は捨てない —— `exGo` が**親なしに落として**置き続ける。 */
+  if (exOut) return { id: exOut, where: 'out', parent: exOut, sub: '',
+                      reused: false, unsure: unsure };
+  /* ④ 行き止まりにしない —— 親なしで進め、在り処と直し方は呼び出し側が出す */
+  return { id: '', where: 'none', parent: '', sub: '',
+           reused: false, unsure: unsure };
 }
 
 /* ── Google Picker ────────────────────────────────────────────────
@@ -6516,6 +6599,8 @@ function exPanel(){
       ? '<code style="font-family:var(--mono)">' + esc(exOut) + '</code>'
       : '<b>指定されていません</b>') +
       (exPickGet() ? '　入れなければ選んだフォルダ' : '') + '<br>' +
+    /* ★押す前に**フォルダ名**を出す（どこに何ができるかが分かる）*/
+    'フォルダ：<b>' + esc(exFolderName(pl)) + '</b><br>' +
     '<label style="display:inline-flex;gap:6px;align-items:center">' +
       '<input type="checkbox" id="exth" checked>サムネを作る（最大 ' +
       EX_THUMB_MAX + ' 枚・あとで中止できます）</label><br>' +
@@ -6551,13 +6636,24 @@ async function exGo(){
     /* ① 書き先のフォルダを先に作る。
        ★**サムネもここへ入れる**ので、サムネより先に決める。
        ⚠️ ここで落ちたら書き出せない（理由は catch が出す）*/
-    const name = exFileName(pl);
-    const dest = await exDest(name, tk);
-    log('書き先：<b>' + esc(name) + '</b>　' +
-        (dest.where === 'out'  ? '（取り込みフォルダの中）' :
-         dest.where === 'pick' ? '（選んだフォルダの中）' :
-         '（My Drive）' + (exDestWhy ? '　' + esc(exDestWhy) : '')),
-        dest.where === 'none' ? 'wa' : '');
+    const fname = exFolderName(pl);          /* フォルダ ＝ **素の STEP のファイル名** */
+    const name  = exFileName(pl);            /* スプシ ＝ `STEPIN_…`（plm が探す鍵）*/
+    const dest  = await exDest(fname, tk);
+    log('書き先：<b>' + esc(dest.sub || name) + '</b>　' +
+        (dest.where === 'out'
+           ? (dest.sub
+                ? '（取り込みフォルダの中' + (dest.reused ? '・前からあるフォルダ' : '') + '）'
+                : '（取り込みフォルダの直下。フォルダは作れませんでした）')
+           : dest.where === 'pick'
+                ? '（選んだフォルダの中' + (dest.reused ? '・前からあるフォルダ' : '') + '）'
+                : '（My Drive）') +
+        (exDestWhy ? '　' + esc(exDestWhy) : ''),
+        (dest.where === 'none' || !dest.sub) ? 'wa' : '');
+    /* ⚠️ **「0件」と「分からない」を同じに扱わない。** 探せなかったときは
+       同じ名前のフォルダが既に在るかもしれないので**そう言う**（黙って重ねない）。 */
+    if (dest.unsure && !dest.reused)
+      log('　⚠️ 同じ名前のフォルダが既に在るかは確かめられませんでした' +
+          '（同じ名前が2つ並ぶことがあります）', 'wa');
 
     /* ② サムネ（★失敗しても書き出しは止めない）*/
     if (wantTh) {
@@ -6569,19 +6665,36 @@ async function exGo(){
       const sb = document.getElementById('exstop');
       if (sb) sb.onclick = () => { exStop = true; };
       let ok = 0, ng = 0, said = false;
+      /* ★置き先。🔴 **断られたら親なしに落として置き続ける**（絵を捨てない）。
+         ⚠️ 落としたことは**1回だけ言う**（同じ失敗を 200 行積まない）。 */
+      let par = dest.id;
       for (let i = 0; i < list.length; i++) {
         if (exStop) { log('■ サムネを中止しました（' + ok + ' 枚まで）', 'wa'); break; }
         const s = list[i];
         const uri = exShot(s.node, EX_THUMB_PX);
         if (!uri) { ng++; continue; }
         try {
-          const id = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, dest.id);
+          const id = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, par);
           s.thumb_url = 'https://drive.google.com/file/d/' + id + '/view';
           ok++;
         } catch (e) {
-          ng++;
-          /* ⚠️ 同じ理由を何十行も積まない（最初の1回だけ出す）*/
-          if (!said) { said = true; log('⚠️ ' + esc(e && e.message || e), 'wa'); }
+          /* 🔴 宛先に置けないだけなら**親なしで置き直す**（サムネは
+             plm 側で部番を埋めるための要。ここで落とすと機能が半分死ぬ）。 */
+          let saved = false;
+          if (par) {
+            try {
+              const id2 = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, '');
+              s.thumb_url = 'https://drive.google.com/file/d/' + id2 + '/view';
+              ok++; saved = true; par = ''; said = true;
+              log('⚠️ 書き先に置けないので、サムネは My Drive に置きます（' +
+                  esc((e && e.message) || e) + '）', 'wa');
+            } catch (e2) { /* ★親なしでも駄目 → 下で数える */ }
+          }
+          if (!saved) {
+            ng++;
+            /* ⚠️ 同じ理由を何十行も積まない（最初の1回だけ出す）*/
+            if (!said) { said = true; log('⚠️ ' + esc(e && e.message || e), 'wa'); }
+          }
         }
         /* ★同じ行を書き換える（何百行も積まない）＋ 画面を止めない */
         lines[lines.length - 1] = 'サムネ ' + (i + 1) + ' / ' + list.length +
@@ -6602,8 +6715,10 @@ async function exGo(){
       esc(sh.title) + '</a>';
     if (mv.moved && dest.where === 'out') {
       /* ★取り込みフォルダの中に入った。これが本来の姿 */
-      log('✓ 書き出しました　' + link, 'ok');
-      phSay('<b>書き出しました</b><span>' + link + '<br>' +
+      log('✓ 書き出しました　' + link +
+          (dest.sub ? '　→ ' + exFLink(dest.id, dest.sub) : ''), 'ok');
+      phSay('<b>書き出しました</b><span>' + link +
+        (dest.sub ? '<br>フォルダ：' + exFLink(dest.id, dest.sub) : '') + '<br>' +
         'plm の「STEP取り込み」→ <b>取り込みファイルを読む</b> から選べます。' +
         '<br><button id="exno2">閉じる</button></span>');
     } else if (mv.moved) {
@@ -6686,7 +6801,8 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     exClosure, exWrite, exRun, cutRender,
     /* ★STEP 取り込みの抽出を**書き込みなしで**試せるようにする
        （`exBuild()` は Drive を触らない。`exValues()` は書く配列を返すだけ）*/
-    exBuild, exValues, exFileName, exStat, exSigPart, exSigAssy, exEig3, exHash,
+    exBuild, exValues, exFileName, exFolderName, exStat, exSigPart, exSigAssy,
+    exEig3, exHash,
     get cutPath(){ return cutPath; }, set cutPath(v){ cutPath = v; },
     /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。
          ⚠️ 隠れたタブでは rAF が止まるので、確認はここから直に叩く） */

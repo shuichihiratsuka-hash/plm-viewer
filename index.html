@@ -1196,11 +1196,7 @@ function finishModel(g, tAll, tri){
         '★上の「細かさ」を**速い（粗い）**にして開き直すと軽く・速くなります', 'wa');
   /* ★plm-gas の「STEP取り込み」から来たときは、読み終えたら**書き出しの口を出す**。
      ⚠️ 勝手に書き出さない（何を書くのかを先に見せて人に押させる）。 */
-  if (exMode) {
-    const eb = document.getElementById('exb');
-    if (eb) { eb.style.display = ''; eb.classList.add('pri'); }
-    exPanel();
-  }
+  if (exMode) { exArm(); exPanel(); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -5445,6 +5441,22 @@ let hashHint = decodeURIComponent((location.hash.match(/(?:^|[#&])hint=([^&]+)/)
       **飛ぶ前に決まっていないといけない**（後ろで `let` すると TDZ で落ちる）。 */
 let exMode = /(?:^|[#&])mode=extract(?:&|$)/.test(location.hash);
 let exOut  = (location.hash.match(/(?:^|[#&])out=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+/* 🔴 **Google の許可の往復から戻ったときは `state` から戻す。**
+   飛ぶと `#` は `access_token=…&state=…` に置き換わるので、
+   **ハッシュを読み直しても `mode=extract` は在らない**（`authState` のコメント）。
+   ★ここで戻す理由は2つ：
+     ① 下の案内（抽出モードです）が出せる
+     ② **`authScope()` が書き込みを足せる** —— 戻さないと同意の2度目が
+        **読み取りだけの権限で飛び**、書き込みの許可が永久に取れない。
+   ⚠️ ふだんの道（`ex` が無い state・この機能より前に作られた古い state）では**何もしない**。
+   ⚠️ `out` は**ハッシュから読むときと同じ形**だけ通す（外から来た値なのでそのまま信じない）。 */
+(function exFromAuthState(){
+  const b = authBack();                                  /* ★戻っていなければ null */
+  if (!b || !b.st || !b.st.ex) return;
+  exMode = true;
+  const o = String(b.st.out || '');
+  if (!exOut && /^[a-zA-Z0-9_-]{10,}$/.test(o)) exOut = o;
+})();
 /** いま要る権限。★抽出のときだけ**書き込み**を足す（ふだんは読み取りだけ）。
     🔴 **ふだんの表示で書き込み権限を求めない**（見るだけの人に書ける鍵を渡さない）。 */
 function authScope(){
@@ -5477,6 +5489,25 @@ function unb64u(t){
   try { return JSON.parse(atob(String(t||'').replace(/-/g,'+').replace(/_/g,'/'))); }
   catch(e){ return {}; }
 }
+/**
+ * 飛んでいる間に持ち回るもの。
+ * 🔴 **飛ぶと `#` は丸ごと `access_token=…&state=…` に置き換わる**ので、
+ *    戻ってから復元するものは全部ここに入れる（上のコメントの前提）。
+ *    ⚠️ **`mode=extract` と `out=` を入れていなかった**ので、
+ *       「Drive を読む許可が必要です」→ 押す → 戻ると **`#id=…&hint=…` だけ**になり、
+ *       `exMode` が false に確定して**書き出しの枠が永久に出なかった**
+ *       （2026-09-03 に本人が本番で踏んだ）。
+ * ⚠️ **ふだんの道（`mode=extract` が無い）では `ex` / `out` を入れない** ——
+ *    中身は従来と1バイト同じ（`{id,hint,r}`）。★古い `state` で戻ってきても落ちない。
+ * ⚠️ `state` は base64url で URL に出る。**秘密を載せない**
+ *    （`mode` と Drive のフォルダ ID は公開してよい。フォルダ ID は plm が URL で渡している）。
+ * ⚠️ `r`（＝1回だけ飛ぶ印）の意味は変えない。
+ */
+function authState(id, hint, mode){
+  const st = { id: id || '', hint: hint || '', r: (mode === 'none' ? 0 : 1) };
+  if (exMode) { st.ex = 1; if (exOut) st.out = exOut; }
+  return st;
+}
 /** Google へ飛ぶ。`mode='none'` は「画面を出さずに済むならそのまま戻して」*/
 function authGo(id, hint, mode){
   const p = new URLSearchParams({
@@ -5485,7 +5516,7 @@ function authGo(id, hint, mode){
     response_type: 'token',
     scope: authScope(),                 /* ★抽出のときだけ書き込みを足す */
     include_granted_scopes: 'true',
-    state: b64u({ id: id || '', hint: hint || '', r: (mode === 'none' ? 0 : 1) })
+    state: b64u(authState(id, hint, mode))
   });
   if (mode === 'none') p.set('prompt', 'none');
   if (hint) p.set('login_hint', hint);
@@ -5680,15 +5711,17 @@ function retryOut(id, why, login){
   document.getElementById('rt').onclick = () => { openDrive(id); };
 }
 
-/* ★抽出モードの案内。⚠️ **何をする画面かを最初に言う**（黙って別の顔にしない）*/
+/* ★抽出モードの案内。⚠️ **何をする画面かを最初に言う**（黙って別の顔にしない）
+   ★言葉は1か所（読み込み時と、あとで `#mode=extract` に書き換えたときが同じ文になる）*/
 document.getElementById('exb').onclick = exPanel;
-if (exMode) {
+function exSay(){
   log('★plm-gas の「STEP取り込み」から開かれました（抽出モード）');
   log('　読み終えたら <b>取り込みファイルを書き出す</b> が出ます。' +
       (exOut ? '' : '　⚠️ 書き先（out）が渡されていません'));
   if (!CFG.SCOPE_WRITE)
     log('　⚠️ 書き込みの権限が設定されていません（config.js の SCOPE_WRITE）', 'wa');
 }
+if (exMode) exSay();
 
 /* ボタンは**設定が在るときだけ**出す（押せるのに動かないものを作らない）*/
 if (CFG.CLIENT_ID) {
@@ -5710,10 +5743,20 @@ if (CFG.CLIENT_ID) {
   if (back) {
     const bid  = String(back.st.id || '');
     const bhint = String(back.st.hint || '');
-    /* ★トークンを URL から消す。★`#id=` は残す（そのままリロードできるように）*/
+    /* ★トークンを URL から消す。★`#id=` は残す（そのままリロードできるように）
+       🔴 **抽出モードなら `mode` / `out` も書き戻す。**
+          `exMode` はハッシュから決まるので、書き戻さないと**F5 で抽出モードが消える**
+          （＝許可が要る状態では、リロードしても書き出しの枠が出ない）。
+       ⚠️ ふだんの道（`exMode` が false）では従来と**同じ文字列**になる
+          （`#id=…&hint=…` ／ `bid` が無ければハッシュ無し）。
+       ⚠️ `replaceState` は `hashchange` を出さない（下の見張りは動かない）。 */
+    const hp = [];
+    if (exMode) hp.push('mode=extract');
+    if (bid) hp.push('id=' + encodeURIComponent(bid));
+    if (exMode && exOut) hp.push('out=' + encodeURIComponent(exOut));
+    if (bid && bhint) hp.push('hint=' + encodeURIComponent(bhint));
     history.replaceState(null, '', location.pathname +
-      (bid ? '#id=' + encodeURIComponent(bid) +
-             (bhint ? '&hint=' + encodeURIComponent(bhint) : '') : ''));
+      (hp.length ? '#' + hp.join('&') : ''));
     hashId = bid; hashHint = bhint;
     document.getElementById('pick').classList.remove('pri');
     if (back.tk) {
@@ -5743,6 +5786,67 @@ if (CFG.CLIENT_ID) {
   log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');
   log('　Drive から読むには OAuth のクライアントIDが要ります（config.js が空です）。');
   log('　いまは「ファイルを選ぶ」から端末のファイルを選んでください。');
+}
+
+/* ══ `#` を書き換えたときも見直す（`hashchange`）══════════════════════
+   🔴 **人は必ず URL を書き換える。** 本人が本番でやった：ふだんの 3D 表示を開いてから
+      `#mode=extract&id=…` に書き換えた ⇒ **何も起きなかった**。
+      `exMode` は読み込み時に1回だけ決まる（上の `let exMode`）ので、
+      ハッシュを書き換えてもスクリプトは再実行されず **false のまま**だった。
+
+   🔴 **ふだんの道は1文字も変えない。**`mode=extract` が**今も前も無い**変化では
+      **何もしないで戻る** —— ふだんの 3D 表示で読み直し（実測 338〜512秒）を
+      絶対に起こさないため。
+   ⚠️ **STEP は読み直さない。**`id=` が変わったときだけ読み直す（別のファイルなので）。
+   ⚠️ **処理中は触らない**（黙って無視せず、そう言う）。
+   ⚠️ `mode` が外れたら**道具を仕舞う**（出しっぱなしにしない）。 */
+addEventListener('hashchange', function(){
+  /* ★許可の往復から戻った直後の `#access_token=` は `replaceState`（＝イベント無し）で
+     消しているのでここには来ない。念のため見送る（トークンを入口の判定に流さない）。 */
+  if (authBack()) return;
+  const h = location.hash;
+  const nEx   = /(?:^|[#&])mode=extract(?:&|$)/.test(h);
+  /* 🔴 ふだんの道は素通り（抽出が絡まない変化では何もしない）*/
+  if (!nEx && !exMode) return;
+  const nId   = (h.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+  const nOut  = (h.match(/(?:^|[#&])out=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+  const nHint = decodeURIComponent((h.match(/(?:^|[#&])hint=([^&]+)/) || [])[1] || '');
+  if (busy || exBusy) {
+    log('⚠️ いま処理中なので URL の変更は反映しません（終わってから書き換え直してください）', 'wa');
+    return;
+  }
+  const was = exMode;
+  const idChanged = !!nId && nId !== hashId;
+  exMode = nEx; exOut = nOut;
+  if (nHint) hashHint = nHint;
+  if (!nEx) {
+    /* ★抽出モードから外れた。★モデルはそのまま（読み直さない）*/
+    exDisarm();
+    log('★抽出モードを外しました');
+    return;
+  }
+  if (!was) exSay();
+  if (idChanged) {
+    hashId = nId;
+    exOpenId(nId);                 /* ★別のファイル。読む道は初回と同じ1本 */
+    return;
+  }
+  /* ★同じファイル。**読み直さない**（既に読めているものを再変換しない）*/
+  if (model) { exArm(); exPanel(); }
+  else if (hashId) log('　★読み込みが終わると書き出しの口が出ます');
+  else log('　★「ファイルを選ぶ」か「Drive から」で読み込むと書き出しの口が出ます');
+});
+/** 🔴 `#id=` で来たときと**同じ道**を通す（読む口を2つ持たない）。
+    ⚠️ 抽出が絡むときだけ呼ぶ（ふだんの道で読み直させない）。 */
+function exOpenId(id){
+  if (!CFG.CLIENT_ID) {
+    log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません' +
+        '（config.js のクライアントIDが空です）', 'wa');
+    return;
+  }
+  if (token) { openDrive(id); return; }         /* ★もう鍵が在る（画面は出ない）*/
+  if (REDIR) { authGo(id, hashHint, 'none'); return; }
+  tapToLoad(id);                                /* ★ポップアップ方式（タップを待つ）*/
 }
 
 
@@ -6175,6 +6279,17 @@ const EX_PICK_KEY = 'plmViewerStepinPick';   /* 選んだフォルダの id（�
 const EX_PX1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ' +
   'AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let exDestWhy = '';               /* ★どこで断られたか（画面に出す）*/
+/* 🔴 **この3つは宣言が無かった**（2026-09-03 に数えて見つけた）。
+   この module は `<script type="module">` ＝ **strict** なので、
+   宣言のない名前は**読むだけで `ReferenceError`** になる。
+   ⇒ `exPanel()` は `exLast = pl` の行で落ちていた
+     （＝ **書き出しの枠が一度も出ていなかった**。`draw()` の末尾から呼ばれるので
+      ログには `✗ exLast is not defined` だけが出ていた）。
+     `exTry()` / `exGo()` も先頭の `if (exBusy)` で落ちる。**抽出の道が全部死んでいた。**
+   ★plm-gas の CLAUDE.md「その道を一度も通っていない」と同じ形。 */
+let exBusy = false;               /* 書き出し中（★二重に押させない）*/
+let exStop = false;               /* サムネの「中止する」を押したか */
+let exLast = null;                /* 直前に組んだ中身（枠と書き出しで2度組まない）*/
 
 /** フォルダを1つ作る。⚠️ `parent` が「自分のもの／Picker で選んだもの」でなければ失敗する */
 async function exMkFolder(name, parent, tk){
@@ -6366,6 +6481,24 @@ async function exTry(){
     if (nb) nb.onclick = () => { document.getElementById('ph').style.display = 'none'; };
     exBusy = false;
   }
+}
+
+/** 抽出の道具を出す（★モデルが読めたときだけ）。★出す場所は1か所 */
+function exArm(){
+  const eb = document.getElementById('exb');
+  if (eb) { eb.style.display = ''; eb.classList.add('pri'); }
+}
+/** 抽出の道具を仕舞う（`#mode=extract` が外れたとき）。
+    ⚠️ **枠が出ていたら閉じる**（押しても書けない枠を残さない）。
+    ★出ているかは**DOM を見る**（`#exgo` は書き出しの枠にしか無い）——
+      状態を別に持つと必ず食い違う。 */
+function exDisarm(){
+  const eb = document.getElementById('exb');
+  if (eb) { eb.style.display = 'none'; eb.classList.remove('pri'); }
+  const ph = document.getElementById('ph');
+  if (!ph || ph.style.display === 'none' || !ph.querySelector('#exgo')) return;
+  if (model) ph.style.display = 'none';        /* ★モデルが在る＝案内は要らない */
+  else phReset();                              /* ★無いときは元の案内に戻す */
 }
 
 function exPanel(){

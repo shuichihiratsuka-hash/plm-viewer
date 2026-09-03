@@ -68,7 +68,7 @@ window.VIEWER_CONFIG = {
   CLIENT_ID: '415008889657-1lpo1jinc0pfjom6mc0rfjdg87ihvv4l.apps.googleusercontent.com',
   SCOPE: 'https://www.googleapis.com/auth/drive.readonly',
   SCOPE_WRITE: 'https://www.googleapis.com/auth/drive.file',
-  PICKER_KEY: '',                 /* ★未設定なら書き先を選べません（上の説明）*/
-  APP_ID: '',                     /* ★Cloud のプロジェクト番号 */
+  PICKER_KEY: 'AIzaSyC6wlm4-uJUjCuaK_aFIzi56a1rbLNmlRA',                 /* ★未設定なら書き先を選べません（上の説明）*/
+  APP_ID: '415008889657',                     /* ★Cloud のプロジェクト番号 */
   REDIRECT_URI: 'https://shuichihiratsuka-hash.github.io/plm-viewer/'
 };

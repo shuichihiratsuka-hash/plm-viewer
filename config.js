@@ -44,9 +44,31 @@
      🔴 **①にするなら、その判断を README に書き残すこと**（権限が広がるので）。
 
    ⚠️ Google Cloud の「スコープ」にも同じものを足すこと（片方だけでは通らない）。 */
+/* PICKER_KEY / APP_ID … ★**Google Picker のための2つ**（2026-09-03）。
+   🔴 **なぜ Picker が要るか。** `drive.file` は「このページが作った or 開いた
+      ファイル」＝**トークンの持ち主ごと**。このページは**利用者自身の OAuth**
+      で動くので、**人が Drive に作ったフォルダには書けません。**
+      ⚠️ 「ビューアがフォルダを作って、人が1回だけ取り込みフォルダへ移す」は
+         **成立しません** —— 作った人しか書けず、2人目は自分のフォルダを作る
+         （行き先が人ごとに分かれる）。
+   ⇒ **Picker で選んだフォルダは「開いた」に入る**ので `drive.file` のまま書けます。
+      ★選ぶのは**利用者ごとに1回**（`localStorage` に覚える）。
+
+   ★どちらも**公開してよい値**（`CLIENT_ID` と同じ。秘密ではない）。
+   | 何 | どこで取るか |
+   |---|---|
+   | `PICKER_KEY` | Google Cloud →「APIとサービス」→ 認証情報 → **APIキー**を作る |
+   | `APP_ID` | Google Cloud の**プロジェクト番号**（プロジェクト設定に出ている）|
+
+   ⚠️ **Google Cloud で「Google Picker API」を有効にする**こと（1回だけ）。
+   ⚠️ `APP_ID` を渡さないと、選んでも**このページに開かれない**ことがあります。
+   ⚠️ **空のままでも 3D 表示は動きます**（効くのは STEP 取り込みの書き出しだけ）。
+      ★空のときは画面が「未設定です」と出します（黙って落ちません）。 */
 window.VIEWER_CONFIG = {
   CLIENT_ID: '415008889657-1lpo1jinc0pfjom6mc0rfjdg87ihvv4l.apps.googleusercontent.com',
   SCOPE: 'https://www.googleapis.com/auth/drive.readonly',
   SCOPE_WRITE: 'https://www.googleapis.com/auth/drive.file',
+  PICKER_KEY: '',                 /* ★未設定なら書き先を選べません（上の説明）*/
+  APP_ID: '',                     /* ★Cloud のプロジェクト番号 */
   REDIRECT_URI: 'https://shuichihiratsuka-hash.github.io/plm-viewer/'
 };

@@ -6112,8 +6112,10 @@ async function exUpload(name, dataUrl, tk, parent){
   return (await r.json()).id;
 }
 /** 取り込みファイル（スプレッドシート）を作って中身を書く */
-async function exSheet(pl, tk){
-  const title = exFileName(pl);
+async function exSheet(pl, tk, name){
+  /* ★フォルダと**同じ名前**にする（どの回のものか照合しやすい）。
+     🔴 `STEPIN_` の接頭辞は**このスプシの名前**が plm の探す鍵。 */
+  const title = name || exFileName(pl);
   const hd = { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/json' };
   const cr = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST', headers: hd,
@@ -6152,10 +6154,220 @@ async function exMove(sid, out, tk){
   return { moved: true };
 }
 
-/* ── 画面 ──────────────────────────────────────────────────────── */
-let exBusy = false, exStop = false, exLast = null;
+/* ── 書き先のフォルダ ──────────────────────────────────────────────
+   🔴 **`drive.file` は「このページが作った or 開いたファイル」＝*トークンの持ち主ごと*。**
+      このページは**利用者自身の OAuth** で動くので、**人が作ったフォルダには書けません。**
+      ⚠️ 「ビューアがフォルダを作り、人が1回だけ取り込みフォルダへ移す」は
+         **成立しません** —— 作った人しか書けず、**2人目は自分のフォルダを作る**。
+         ⇒ 行き先が人ごとに分かれる（2026-09-03 に本人の指摘で撤回）。
 
-/** 何を書き出すのかを先に見せる。★押す前に件数と欠けが読める */
+   ⇒ 残る道は **Google Picker**：**Picker で選んだフォルダは「開いた」に入る**ので
+      `drive.file` のまま書けます。★**利用者ごとに1回**選べばよい（覚えておく）。
+
+   🔴 **順番が決めごと**：① `out=`（plm が渡す `IMPORT_ROOT`）を試す
+      ② 覚えている「選んだフォルダ」を試す ③ どちらも駄目なら **My Drive**
+      （★リンクと「取り込みフォルダへ移してください」を出す。**行き止まりにしない**）。
+   ⚠️ **Picker を最初から出さない**（毎回選ばせるのは邪魔）。**駄目だったときだけ。**
+
+   🔴 **「Picker で選んだフォルダの中に `drive.file` で作れる」は未実測**（2026-09-03）。
+      ⇒ **`exTry()`（画面の「書き込みを試す」）で本人が1回確かめてから**本線に入れる。 */
+const EX_PICK_KEY = 'plmViewerStepinPick';   /* 選んだフォルダの id（★利用者ごと）*/
+const EX_PX1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ' +
+  'AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+let exDestWhy = '';               /* ★どこで断られたか（画面に出す）*/
+
+/** フォルダを1つ作る。⚠️ `parent` が「自分のもの／Picker で選んだもの」でなければ失敗する */
+async function exMkFolder(name, parent, tk){
+  const meta = { name: String(name), mimeType: 'application/vnd.google-apps.folder' };
+  if (parent) meta.parents = [parent];
+  const r = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/json' },
+    body: JSON.stringify(meta) });
+  if (!r.ok) throw new Error('（' + r.status + '）' + (await exErr(r)));
+  return (await r.json()).id;
+}
+/** 消す（試しの後片付け。★自分が作ったものだけ）*/
+async function exRm(id, tk){
+  try {
+    await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id),
+      { method: 'DELETE', headers: { Authorization: 'Bearer ' + tk } });
+  } catch (e) { /* ★片付けの失敗は流す（本題ではない）*/ }
+}
+function exPickGet(){
+  try { return localStorage.getItem(EX_PICK_KEY) || ''; } catch (e) { return ''; }
+}
+function exPickSet(id){
+  try { localStorage.setItem(EX_PICK_KEY, String(id)); } catch (e) { /* 覚えなくても動く */ }
+}
+
+/** 今回の書き先（`STEPIN_<STEPファイル名>` のフォルダ）を用意する。
+    ★中に作るので、親は `out=` か「選んだフォルダ」のどちらか。 */
+async function exDest(name, tk){
+  exDestWhy = '';
+  const why = [];
+  if (exOut) {
+    try { return { id: await exMkFolder(name, exOut, tk), where: 'out', parent: exOut }; }
+    catch (e) { why.push('取り込みフォルダ' + ((e && e.message) || '')); }
+  } else {
+    why.push('取り込みフォルダ（out）が渡されていません');
+  }
+  const pick = exPickGet();
+  if (pick) {
+    try { return { id: await exMkFolder(name, pick, tk), where: 'pick', parent: pick }; }
+    catch (e) { why.push('選んだフォルダ' + ((e && e.message) || '')); }
+  }
+  /* 🔴 行き止まりにしない —— 親なしで進め、在り処と直し方は呼び出し側が出す */
+  exDestWhy = why.join(' / ');
+  return { id: '', where: 'none', parent: '' };
+}
+
+/* ── Google Picker ────────────────────────────────────────────────
+   ★**`drive.file` の前提の仕組み**。選んだものだけがこのページに開かれる。
+   ⚠️ **スコープを増やさない**（`drive.file` のまま）。
+   🔴 `config.js` に **`PICKER_KEY`（API キー）** と **`APP_ID`（Cloud の
+      プロジェクト番号）** が要る。★どちらも**公開してよい値**（`CLIENT_ID` と同じ）。
+      ⚠️ `APP_ID` を渡さないと、選んでも**このページに開かれない**ことがある。 */
+let exPickerLoaded = false;
+function exPickerReady(){
+  if (exPickerLoaded) return Promise.resolve(true);
+  return new Promise(function(res){
+    const done = () => {
+      if (!window.gapi || !gapi.load) return res(false);
+      gapi.load('picker', { callback: () => { exPickerLoaded = true; res(true); },
+                            onerror: () => res(false) });
+    };
+    if (window.gapi && window.gapi.load) return done();
+    const sc = document.createElement('script');
+    sc.src = 'https://apis.google.com/js/api.js';
+    sc.async = true; sc.defer = true;
+    sc.onload = done;
+    sc.onerror = () => res(false);
+    document.head.appendChild(sc);
+  });
+}
+/** フォルダを1つ選ばせる。★選べたら id を返し、覚える。閉じられたら '' */
+async function exPickFolder(tk){
+  if (!CFG.PICKER_KEY)
+    throw new Error('Picker の API キーが設定されていません（config.js の PICKER_KEY）');
+  if (!(await exPickerReady()))
+    throw new Error('Picker を読み込めませんでした（通信がふさがれている可能性があります）');
+  return new Promise(function(res){
+    const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setSelectFolderEnabled(true).setIncludeFolders(true);
+    const b = new google.picker.PickerBuilder()
+      .setOAuthToken(tk)
+      .setDeveloperKey(CFG.PICKER_KEY)
+      .addView(view)
+      .setTitle('取り込みフォルダを選んでください')
+      .setCallback(function(d){
+        if (d.action === google.picker.Action.PICKED) {
+          const id = ((d.docs || [])[0] || {}).id || '';
+          if (id) exPickSet(id);
+          res(id);
+        } else if (d.action === google.picker.Action.CANCEL) { res(''); }
+      });
+    if (CFG.APP_ID) b.setAppId(CFG.APP_ID);
+    b.build().setVisible(true);
+  });
+}
+
+/** フォルダへのリンク。★出し方を2つ持たない */
+function exFLink(fid, label){
+  return '<a href="https://drive.google.com/drive/folders/' + encodeURIComponent(fid) +
+    '" target="_blank" rel="noopener">' + esc(label) + '</a>';
+}
+
+/** 🔴 **書き込みを1回だけ試す。**
+    ★確かめたいことは1つ：**Picker で選んだフォルダの中に `drive.file` で作れるか。**
+      ここが通らないと Picker の道は成立せず、`SCOPE_WRITE` を `drive`（全権）に
+      上げるしか残りません ⇒ **本人の判断に戻す**ので、押して分かる形にしてある。
+    ⚠️ 試しに作ったものは片付ける（跡を残さない）。 */
+async function exTry(){
+  if (exBusy) return;
+  exBusy = true;
+  const ph = document.getElementById('ph');
+  if (ph) ph.style.display = 'none';
+  ftFold(false);                            /* ★答えはログに出る。開いておく */
+  let tk = '', made = [], picked = '';
+  try {
+    if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
+    if (!CFG.SCOPE_WRITE)
+      throw new Error('書き込みの権限が設定されていません（config.js の SCOPE_WRITE）');
+    tk = await getToken();
+    log('■ 書き込みを試します　<code style="font-family:var(--mono)">' +
+        esc(CFG.SCOPE_WRITE) + '</code>');
+
+    /* ① out= に直接作れるか。★`drive.file` では**✗ が正常**（人が作ったフォルダ）*/
+    if (!exOut) {
+      log('　① 取り込みフォルダ（out）… 渡されていません', 'wa');
+    } else {
+      try {
+        made.push(await exMkFolder('_試し_out_' + Date.now(), exOut, tk));
+        log('　① 取り込みフォルダに直接作れる … ✓', 'ok');
+      } catch (e) {
+        log('　① 取り込みフォルダに直接作れる … ✗' + esc((e && e.message) || e) +
+            '　★`drive.file` ならこれが正常です');
+      }
+    }
+
+    /* ② Picker の設定と読み込み */
+    if (!CFG.PICKER_KEY) {
+      log('　② Picker … ⚠️ API キーが未設定です（config.js の PICKER_KEY）', 'wa');
+      throw new Error('Picker の API キーが設定されていません');
+    }
+    if (!CFG.APP_ID)
+      log('　② Picker … ⚠️ APP_ID が未設定です（選んでも開かれないことがあります）', 'wa');
+    if (!(await exPickerReady())) throw new Error('Picker を読み込めませんでした');
+    log('　② Picker を読み込めました … ✓', 'ok');
+
+    /* ③ 選ばせる */
+    picked = await exPickFolder(tk);
+    if (!picked) { log('■ 選ばずに閉じました', 'wa'); return; }
+    log('　③ フォルダを選べました … ✓　<code style="font-family:var(--mono)">' +
+        esc(picked) + '</code>', 'ok');
+
+    /* ④ 🔴 ここが本題 */
+    let sub = '';
+    try {
+      sub = await exMkFolder('_試し_' + Date.now(), picked, tk);
+      made.push(sub);
+      log('　④ 選んだフォルダの中にフォルダを作る … ✓', 'ok');
+    } catch (e) {
+      log('　④ 選んだフォルダの中にフォルダを作る … ✗' + esc((e && e.message) || e), 'ng');
+      throw new Error('Picker で選んでも、そのフォルダの中には作れませんでした');
+    }
+    try {
+      made.push(await exUpload('_試し.png', EX_PX1, tk, sub));
+      log('　⑤ その中にファイルを置く … ✓', 'ok');
+    } catch (e) {
+      log('　⑤ その中にファイルを置く … ✗' + esc((e && e.message) || e), 'ng');
+      throw new Error('選んだフォルダの中にファイルを置けませんでした');
+    }
+
+    log('✓ Picker の道で動きます', 'ok');
+    phSay('<b>書き込みを確かめました</b><span>' +
+      '✓ 選んだフォルダに書けます（' + exFLink(picked, '選んだフォルダ') + '）。' +
+      '<br>★この選択は<b>この端末に覚えてあります</b>。' +
+      '<br><button id="extno">閉じる</button></span>');
+  } catch (e) {
+    const m = (e && e.message) ? e.message : String(e);
+    log('✗ ' + esc(m), 'ng');
+    /* 🔴 行き止まりにしない —— 駄目なら次に何をするかを出す */
+    phSay('<b>書き込みを確かめられませんでした</b><span>' + esc(m) +
+      '<br>★`config.js` の <code style="font-family:var(--mono)">PICKER_KEY</code> /' +
+      ' <code style="font-family:var(--mono)">APP_ID</code> を入れるか、' +
+      '<code style="font-family:var(--mono)">SCOPE_WRITE</code> を' +
+      ' <code style="font-family:var(--mono)">.../auth/drive</code> に上げる判断が要ります。' +
+      '<br><button id="extno">閉じる</button></span>');
+  } finally {
+    for (let i = 0; i < made.length; i++) if (tk) await exRm(made[i], tk);
+    const nb = document.getElementById('extno');
+    if (nb) nb.onclick = () => { document.getElementById('ph').style.display = 'none'; };
+    exBusy = false;
+  }
+}
+
 function exPanel(){
   if (!model) { log('先にモデルを読んでください', 'wa'); return; }
   const pl = exBuild();
@@ -6169,14 +6381,17 @@ function exPanel(){
       '</b>　配置 <b>' + occ + '</b><br>' +
     '書き先：' + (exOut
       ? '<code style="font-family:var(--mono)">' + esc(exOut) + '</code>'
-      : '<b>指定されていません</b>（My Drive に作られます）') + '<br>' +
+      : '<b>指定されていません</b>') +
+      (exPickGet() ? '　入れなければ選んだフォルダ' : '') + '<br>' +
     '<label style="display:inline-flex;gap:6px;align-items:center">' +
       '<input type="checkbox" id="exth" checked>サムネを作る（最大 ' +
       EX_THUMB_MAX + ' 枚・あとで中止できます）</label><br>' +
     pl.warn.map(w => '⚠️ ' + esc(w)).join('<br>') +
     '<br><button class="pri" id="exgo">書き出す</button>' +
+    ' <button id="extry">書き込みを試す</button>' +
     ' <button id="exno">閉じる</button></span>');
   document.getElementById('exgo').onclick = exGo;
+  document.getElementById('extry').onclick = exTry;
   document.getElementById('exno').onclick = () => {
     document.getElementById('ph').style.display = 'none';
   };
@@ -6200,7 +6415,18 @@ async function exGo(){
       throw new Error('書き込みの権限が設定されていません（config.js の SCOPE_WRITE）');
     const tk = await getToken();
 
-    /* ① サムネ（★失敗しても書き出しは止めない）*/
+    /* ① 書き先のフォルダを先に作る。
+       ★**サムネもここへ入れる**ので、サムネより先に決める。
+       ⚠️ ここで落ちたら書き出せない（理由は catch が出す）*/
+    const name = exFileName(pl);
+    const dest = await exDest(name, tk);
+    log('書き先：<b>' + esc(name) + '</b>　' +
+        (dest.where === 'out'  ? '（取り込みフォルダの中）' :
+         dest.where === 'pick' ? '（選んだフォルダの中）' :
+         '（My Drive）' + (exDestWhy ? '　' + esc(exDestWhy) : '')),
+        dest.where === 'none' ? 'wa' : '');
+
+    /* ② サムネ（★失敗しても書き出しは止めない）*/
     if (wantTh) {
       const list = pl.shapes.slice(0, EX_THUMB_MAX);
       const cut = pl.shapes.length - list.length;
@@ -6216,7 +6442,7 @@ async function exGo(){
         const uri = exShot(s.node, EX_THUMB_PX);
         if (!uri) { ng++; continue; }
         try {
-          const id = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, exOut);
+          const id = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, dest.id);
           s.thumb_url = 'https://drive.google.com/file/d/' + id + '/view';
           ok++;
         } catch (e) {
@@ -6235,27 +6461,39 @@ async function exGo(){
       log('サムネ ' + ok + ' 枚' + (ng ? '　✗ 失敗 ' + ng + ' 枚' : ''), ok ? 'ok' : 'wa');
     }
 
-    /* ② 取り込みファイル */
-    const sh = await exSheet(pl, tk);
-    const mv = await exMove(sh.id, exOut, tk);
+    /* ③ 取り込みファイル */
+    const sh = await exSheet(pl, tk, name);
+    const mv = await exMove(sh.id, dest.id, tk);
     const url = 'https://docs.google.com/spreadsheets/d/' + sh.id + '/edit';
     const link = '<a href="' + url + '" target="_blank" rel="noopener">' +
       esc(sh.title) + '</a>';
-    if (mv.moved) {
+    if (mv.moved && dest.where === 'out') {
+      /* ★取り込みフォルダの中に入った。これが本来の姿 */
       log('✓ 書き出しました　' + link, 'ok');
       phSay('<b>書き出しました</b><span>' + link + '<br>' +
         'plm の「STEP取り込み」→ <b>取り込みファイルを読む</b> から選べます。' +
+        '<br><button id="exno2">閉じる</button></span>');
+    } else if (mv.moved) {
+      /* ★Picker で選んだフォルダの中。
+         🔴 **選んだ先が取り込みフォルダの下でなければ plm からは見えない。**
+            ⚠️ 「選べます」と断定しない（どこを選んだかはこちらには分からない）。 */
+      log('✓ 書き出しました　' + link +
+          '　→ ' + exFLink(dest.parent, '選んだフォルダ'), 'ok');
+      phSay('<b>書き出しました</b><span>' + link + '<br>' +
+        exFLink(dest.parent, '選んだフォルダ') +
+        ' が plm の<b>取り込みフォルダの下に在れば</b>そのまま選べます。' +
         '<br><button id="exno2">閉じる</button></span>');
     } else {
       /* 🔴 **行き止まりにしない。** 作れてはいるので、在り処と直し方を出す。
          ⚠️ **「plm からは見えない」ことを必ず言う**（黙ると
             「書き出したのに出てこない」になる）。 */
-      log('⚠️ 作れましたが、指定のフォルダへ移せませんでした' + esc(mv.why || ''), 'wa');
+      log('⚠️ My Drive に作りました' + esc(mv.why || ''), 'wa');
       phSay('<b>My Drive に作りました（まだ plm からは見えません）</b><span>' +
-        link + '<br>指定のフォルダへ移せませんでした' + esc(mv.why || '') + '<br>' +
+        link + '<br>' +
         '★このファイルを Drive で<b>取り込みフォルダへ移すと</b> plm から選べます' +
         (exOut ? '（<code style="font-family:var(--mono)">' + esc(exOut) +
-                 '</code>）' : '') +
+                 '</code>）' : '') + '。' +
+        '<br>★毎回移さずに済ませるには <b>書き込みを試す</b> で書き先を選んでください。' +
         '<br><button id="exno2">閉じる</button></span>');
     }
     const b2 = document.getElementById('exno2');

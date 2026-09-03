@@ -23,8 +23,30 @@
    ⚠️ 「JavaScript 生成元」（ドメインだけ）とは**別の欄**。両方要る。
    ★なぜこの方式か：`requestAccessToken()` は必ずポップアップを開き、iOS Safari は
      タップと紐づかないポップアップを止める。ページごと飛べばポップアップが要らない。 */
+/* SCOPE_WRITE … ★**STEP 取り込み（`#mode=extract`）のときだけ**足す権限。
+     ふだんの 3D 表示では求めない（`authScope()` が出し分ける）。
+     ⚠️ **空にすると書き出しの口が「未設定」と断る**（黙って落ちない）。
+
+   🔴 **ここは security の判断が要る。本人が決める。**
+     | 値 | できること | 危なさ |
+     |---|---|---|
+     | `drive.file`（既定）| **このページが作ったファイルだけ**触れる | 小さい |
+     | `drive` | 利用者の Drive を**全部**読み書きできる | 大きい |
+
+     ⚠️ **`drive.file` で足りるかは未検証**（2026-09-03 時点）。
+        Drive は「アプリが作った or 開いたファイルだけ」なので、
+        **`out=` で渡された既存フォルダの中に作れない可能性がある**
+        （その場合 My Drive に出来る。ビューアはそれを画面に出して、
+         手で移すよう案内する ＝ 行き止まりにはしない）。
+     ⇒ 本番で1回試して、フォルダへ入らなければ次のどちらかにする：
+        ① ここを `https://www.googleapis.com/auth/drive` にする（権限が大きくなる）
+        ② Google Picker で書き先を選ばせる（`drive.file` のまま。実装が増える）
+     🔴 **①にするなら、その判断を README に書き残すこと**（権限が広がるので）。
+
+   ⚠️ Google Cloud の「スコープ」にも同じものを足すこと（片方だけでは通らない）。 */
 window.VIEWER_CONFIG = {
   CLIENT_ID: '415008889657-1lpo1jinc0pfjom6mc0rfjdg87ihvv4l.apps.googleusercontent.com',
   SCOPE: 'https://www.googleapis.com/auth/drive.readonly',
+  SCOPE_WRITE: 'https://www.googleapis.com/auth/drive.file',
   REDIRECT_URI: 'https://shuichihiratsuka-hash.github.io/plm-viewer/'
 };

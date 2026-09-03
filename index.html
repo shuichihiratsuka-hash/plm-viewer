@@ -226,6 +226,9 @@ a{color:var(--accent-hi)}
   <input type="file" id="f" style="display:none">
   <button class="pri" id="pick">ファイルを選ぶ</button>
   <button id="drv" style="display:none">Drive から</button>
+  <!-- ★plm-gas の「STEP取り込み」から `#mode=extract` で開かれたときだけ出す。
+       ⚠️ ふだんの 3D 表示には出さない（見に来た人に書き込みの口を見せない）。 -->
+  <button id="exb" style="display:none">取り込みファイルを書き出す</button>
   <!-- ★指の画面でモデルを読んだあとだけ出る「⋯」。
        🔴 **消すのではなく畳む。** 本人の指摘（2026-08-28）
        「上部バーのスクリーンショットっているかな？」「細かさも開いた後じゃいらないよね？」
@@ -1191,6 +1194,13 @@ function finishModel(g, tAll, tri){
   if (tri > 2000000)
     log('⚠️ 三角形が200万超。スマホでは重いはずです。' +
         '★上の「細かさ」を**速い（粗い）**にして開き直すと軽く・速くなります', 'wa');
+  /* ★plm-gas の「STEP取り込み」から来たときは、読み終えたら**書き出しの口を出す**。
+     ⚠️ 勝手に書き出さない（何を書くのかを先に見せて人に押させる）。 */
+  if (exMode) {
+    const eb = document.getElementById('exb');
+    if (eb) { eb.style.display = ''; eb.classList.add('pri'); }
+    exPanel();
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -5427,6 +5437,19 @@ let hashId = (location.hash.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1]
 /* ★誰が開いているか（plm-gas が渡す）。**アカウント選択を出さないため**に使う。
    ⚠️ `#` の後ろなのでサーバには送られない。⚠️ 無くても動く（選択が出るだけ）。 */
 let hashHint = decodeURIComponent((location.hash.match(/(?:^|[#&])hint=([^&]+)/) || [])[1] || '');
+/* ══ STEP 取り込み（plm-gas の「STEP取り込み」から開かれたとき）════════════
+   契約は plm-gas の `docs/design/step-import.md` §5「境目の形」：
+     `#mode=extract&id=<STEPのfileId>&out=<書く先のfolderId>&hint=<メール>`
+   ★`mode` が `extract` のときだけ**書き出しの道具が出る**（ふだんの 3D 表示は変えない）。
+   🔴 **ここで宣言する理由**：下の「入口の分岐」が `authScope()` を通るので、
+      **飛ぶ前に決まっていないといけない**（後ろで `let` すると TDZ で落ちる）。 */
+let exMode = /(?:^|[#&])mode=extract(?:&|$)/.test(location.hash);
+let exOut  = (location.hash.match(/(?:^|[#&])out=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+/** いま要る権限。★抽出のときだけ**書き込み**を足す（ふだんは読み取りだけ）。
+    🔴 **ふだんの表示で書き込み権限を求めない**（見るだけの人に書ける鍵を渡さない）。 */
+function authScope(){
+  return (exMode && CFG.SCOPE_WRITE) ? (CFG.SCOPE + ' ' + CFG.SCOPE_WRITE) : CFG.SCOPE;
+}
 let token = '';
 let reauthed = false;      /* ★401 での取り直しは1回だけ（飛び続けないため）*/
 
@@ -5460,7 +5483,7 @@ function authGo(id, hint, mode){
     client_id: CFG.CLIENT_ID,
     redirect_uri: REDIR,
     response_type: 'token',
-    scope: CFG.SCOPE,
+    scope: authScope(),                 /* ★抽出のときだけ書き込みを足す */
     include_granted_scopes: 'true',
     state: b64u({ id: id || '', hint: hint || '', r: (mode === 'none' ? 0 : 1) })
   });
@@ -5522,7 +5545,7 @@ function reqToken(hint){
   return new Promise((res, rej) => {
     google.accounts.oauth2.initTokenClient({
       client_id: CFG.CLIENT_ID,
-      scope: CFG.SCOPE,
+      scope: authScope(),                           /* ★抽出のときだけ書き込みを足す */
       prompt: '',                                   /* ★出す必要が無ければ出さない */
       callback: r => {
         if (!r || !r.access_token) { rej(new Error('ログインが完了しませんでした')); return; }
@@ -5657,6 +5680,16 @@ function retryOut(id, why, login){
   document.getElementById('rt').onclick = () => { openDrive(id); };
 }
 
+/* ★抽出モードの案内。⚠️ **何をする画面かを最初に言う**（黙って別の顔にしない）*/
+document.getElementById('exb').onclick = exPanel;
+if (exMode) {
+  log('★plm-gas の「STEP取り込み」から開かれました（抽出モード）');
+  log('　読み終えたら <b>取り込みファイルを書き出す</b> が出ます。' +
+      (exOut ? '' : '　⚠️ 書き先（out）が渡されていません'));
+  if (!CFG.SCOPE_WRITE)
+    log('　⚠️ 書き込みの権限が設定されていません（config.js の SCOPE_WRITE）', 'wa');
+}
+
 /* ボタンは**設定が在るときだけ**出す（押せるのに動かないものを作らない）*/
 if (CFG.CLIENT_ID) {
   const b = document.getElementById('drv');
@@ -5712,6 +5745,536 @@ if (CFG.CLIENT_ID) {
   log('　いまは「ファイルを選ぶ」から端末のファイルを選んでください。');
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   STEP 取り込み（`#mode=extract`）— plm-gas へ「取り込みファイル」を書く
+   ══════════════════════════════════════════════════════════════════════
+   契約は plm-gas の `docs/design/step-import.md` §5「境目の形」。
+     もらうもの … `#mode=extract&id=<STEPのfileId>&out=<書く先のfolderId>&hint=<メール>`
+     書くもの   … `out` の中に **`STEPIN_` で始まるスプレッドシート**（＋ サムネ PNG）。
+                  シートは **`SHAPE` / `EDGE` / `META`** の3枚。
+
+   🔴 **境目は「取り込みファイル」1つだけ。** ここから plm-gas を呼ばない
+      （このページがサーバに何も送らない性質を崩さない）。plm は Drive を読むだけ。
+
+   🔴 **員数は「数える」。** 同じ子が3回置かれていれば `qty=3`。
+      ⚠️ plm 側の **BOM表**の取り込みは**逆**（同じ構成の再掲なので重複排除が正）。
+         混ぜると 7枚のワッシャが 49枚になる（設計書 §4.1）。**あちらの流儀を持ち込まない。**
+
+   🔴 **同一性は形状シグネチャで見る。部番では見ない**（実測 41.8% が未採番）。
+      ⇒ `exSigPart` は**剛体変換不変量だけ**で作る（設計書 §4.3）。
+
+   ⚠️ **plm が読むのは表示値**（`getDisplayValues`）。だから `sig` は**文字列**で書く
+      （数値だと指数表記に化ける）。⇒ 書き込みは `valueInputOption:'RAW'`。
+   ══════════════════════════════════════════════════════════════════════ */
+const EX_PREFIX    = 'STEPIN_';   /* 🔴 plm が候補を絞る鍵（設計書 §5）。変えない */
+const EX_THUMB_MAX = 200;         /* サムネの上限。★切ったことを必ず出す */
+const EX_THUMB_PX  = 320;
+const EX_SHAPE_COLS = ['sig', 'kind', 'raw_name', 'category', 'material', 'mass_raw',
+  'volume_mm3', 'area_mm2', 'n_vertex', 'n_tri', 'bbox', 'density', 'thumb_url'];
+const EX_EDGE_COLS  = ['parent_sig', 'child_sig', 'qty', 'nauo_ids'];
+
+/**
+ * 文字列 → 16桁の16進。
+ * ★FNV-1a を2種の初期値で回して繋ぐ（32bit×2）。
+ * 🔴 **`crypto.subtle` を使わない** —— あれは**セキュアな文脈でしか動かない**ので、
+ *    `file://` で開いたときに黙って死ぬ（＝ローカルで確かめられなくなる）。
+ * ⚠️ 暗号用途ではない（同一性の鍵）。衝突しても**別の形が1つに見える**だけで、
+ *    それは画面に出て人が割れる（設計書 §4.3）。
+ */
+function exHash(s){
+  const t = String(s);
+  let a = 0x811c9dc5, b = 0x9e3779b9;
+  for (let i = 0; i < t.length; i++) {
+    const c = t.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x85ebca6b) >>> 0;
+    b = (b + ((a >>> 13) | (a << 19))) >>> 0;
+  }
+  const h = n => ('0000000' + (n >>> 0).toString(16)).slice(-8);
+  return h(a) + h(b);
+}
+
+/**
+ * 有効6桁に丸めた文字列。
+ * 🔴 **丸めないとシグネチャが毎回変わる。** occt は部品の点を**組立の世界座標**で
+ *    返すので（設計書 §4.3）、同じ部品でも置かれ方で下位の桁が動く。
+ */
+function exQ(v){
+  const n = Number(v);
+  if (!isFinite(n) || n === 0) return '0';
+  return n.toPrecision(6);
+}
+
+/**
+ * 対称3×3の固有値（小さい順）。★閉じた式なので反復も収束判定も要らない。
+ * 🔴 **固有ベクトルは返さない。** 立方体・円筒では**向きが定まらない**（縮退）ので、
+ *    主軸に投影した寸法は数値の揺れで暴れる。**固有値は必ず定まる。**
+ *    ⚠️ ここを「主軸に投影した外形寸法」でやると、**ワッシャやボルトのような
+ *       対称な部品**（＝いちばん数が多い部品）でシグネチャが不安定になる。
+ * 行列は [[a,d,e],[d,b,f],[e,f,c]]。
+ */
+function exEig3(a, b, c, d, e, f){
+  const p1 = d * d + e * e + f * f;
+  if (p1 <= 0) return [a, b, c].sort((x, y) => x - y);
+  const q = (a + b + c) / 3;
+  const p2 = (a - q) * (a - q) + (b - q) * (b - q) + (c - q) * (c - q) + 2 * p1;
+  const p = Math.sqrt(p2 / 6) || 1e-300;
+  const b00 = (a - q) / p, b11 = (b - q) / p, b22 = (c - q) / p;
+  const b01 = d / p, b02 = e / p, b12 = f / p;
+  let r = (b00 * (b11 * b22 - b12 * b12)
+         - b01 * (b01 * b22 - b12 * b02)
+         + b02 * (b01 * b12 - b11 * b02)) / 2;
+  r = Math.max(-1, Math.min(1, r));
+  const phi = Math.acos(r) / 3;
+  const e1 = q + 2 * p * Math.cos(phi);                      /* 最大 */
+  const e3 = q + 2 * p * Math.cos(phi + 2 * Math.PI / 3);    /* 最小 */
+  return [e3, 3 * q - e1 - e3, e1];
+}
+
+/**
+ * 部品の**剛体変換不変量**を測る。
+ *
+ * ★体積・表面積・頂点数・三角形数は**そのまま不変量**。
+ * 🔴 **体積は「重心を原点にして」積む。** 原点のままだと、閉じていない形
+ *    （板金・サーフェス）で**置かれ方によって値が変わる**。重心は形と一緒に動くので、
+ *    重心基準なら剛体変換に対して不変になる。
+ * 🔴 **外形は共分散行列の固有値から出す。**
+ *    ⚠️ **世界座標の AABB を使ってはいけない** —— 回して置かれた同じ部品で
+ *       値が変わり、**同じ部品が2つに割れる**（＝仮番が2つ増える）。
+ * ★寸法の目安は `sqrt(12λ)`（一様な直方体なら辺の長さに戻る）。
+ *    ⚠️ 点は面に偏るので**目安**。画面に出すのは人が形を思い出すためだけ。
+ */
+function exStat(node){
+  const S = { tri: 0, vtx: 0, vol: 0, area: 0, ext: [0, 0, 0] };
+  const ms = [];
+  node.traverse(o => {
+    if (o.isMesh && o.geometry && o.geometry.getAttribute('position')) ms.push(o);
+  });
+  if (!ms.length) return S;
+  /* ① 重心 */
+  let n = 0, cx = 0, cy = 0, cz = 0;
+  for (const m of ms) {
+    const p = m.geometry.getAttribute('position').array;
+    for (let i = 0; i < p.length; i += 3) { cx += p[i]; cy += p[i + 1]; cz += p[i + 2]; }
+    n += p.length / 3;
+  }
+  if (!n) return S;
+  cx /= n; cy /= n; cz /= n;
+  /* ② 共分散・体積・表面積（重心を原点にして積む）*/
+  let xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+  for (const m of ms) {
+    const g = m.geometry, p = g.getAttribute('position').array;
+    const ix = g.getIndex() ? g.getIndex().array : null;
+    S.vtx += p.length / 3;
+    for (let i = 0; i < p.length; i += 3) {
+      const x = p[i] - cx, y = p[i + 1] - cy, z = p[i + 2] - cz;
+      xx += x * x; yy += y * y; zz += z * z; xy += x * y; xz += x * z; yz += y * z;
+    }
+    const nt = ix ? ix.length / 3 : p.length / 9;
+    S.tri += nt;
+    for (let t = 0; t < nt; t++) {
+      const i0 = (ix ? ix[t * 3] : t * 3) * 3;
+      const i1 = (ix ? ix[t * 3 + 1] : t * 3 + 1) * 3;
+      const i2 = (ix ? ix[t * 3 + 2] : t * 3 + 2) * 3;
+      const ax = p[i0] - cx, ay = p[i0 + 1] - cy, az = p[i0 + 2] - cz;
+      const bx = p[i1] - cx, by = p[i1 + 1] - cy, bz = p[i1 + 2] - cz;
+      const dx = p[i2] - cx, dy = p[i2 + 1] - cy, dz = p[i2 + 2] - cz;
+      S.vol += (ax * (by * dz - bz * dy) - ay * (bx * dz - bz * dx)
+              + az * (bx * dy - by * dx)) / 6;
+      const ux = bx - ax, uy = by - ay, uz = bz - az;
+      const vx = dx - ax, vy = dy - ay, vz = dz - az;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      S.area += Math.sqrt(nx * nx + ny * ny + nz * nz) / 2;
+    }
+  }
+  S.vol = Math.abs(S.vol);
+  const k = 1 / n;
+  S.ext = exEig3(xx * k, yy * k, zz * k, xy * k, xz * k, yz * k)
+    .map(l => Math.sqrt(Math.max(0, l) * 12)).sort((x, y) => x - y);
+  return S;
+}
+
+/** 部品のシグネチャ（設計書 §4.3）。⚠️ 材質は occt が返さないので今は空 */
+function exSigPart(S, material, density){
+  return exHash(['P', exQ(S.vol), exQ(S.area), S.vtx | 0, S.tri | 0,
+    exQ(S.ext[0]), exQ(S.ext[1]), exQ(S.ext[2]),
+    String(material || ''), String(density || '')].join('|'));
+}
+/** 組立のシグネチャ＝**子の（シグネチャ, 員数）を整列して連結**（設計書 §4.3）。
+    ★`A-` を付ける（plm の画面が組立と部品を出し分ける）。 */
+function exSigAssy(kids){
+  return 'A-' + exHash('A|' + kids.map(k => k.sig + '×' + k.qty).sort().join('|'));
+}
+
+/** 入れ物（部品のまとまり）の子だけ。★`isCont` は GLB の素の Object3D も拾う */
+function exKids(o){ return (o.children || []).filter(isCont); }
+/** 名前。⚠️ ビューアが付けた `(名前なし)` は**素の空**に戻す
+    （plm が部番として解こうとしてしまう）*/
+function exName(o){
+  const t = String(o && o.name || '').trim();
+  return t === '(名前なし)' ? '' : t;
+}
+
+/**
+ * いまのモデルから取り込みファイルの中身を組む。**書き込みはしない**（試せるように）。
+ * ★`window.__viewer.exBuild()` から呼べる（localhost のときだけ）。
+ * @return {{shapes:Array, edges:Array, meta:Object, warn:Array}}
+ */
+function exBuild(){
+  if (!model) return null;
+  const shapes = [], edges = [], seen = {}, eseen = {};
+  let nAssyGeo = 0, deep = 0;
+  function walk(o, d){
+    if (d > 64) { deep++; return null; }          /* ⚠️ 念のため（輪は occt が作らない）*/
+    const kids = exKids(o);
+    if (!kids.length) {
+      const S = exStat(o);
+      const sig = exSigPart(S, '', '');
+      if (!seen[sig]) {
+        seen[sig] = 1;
+        shapes.push({ sig: sig, kind: 'part', raw_name: exName(o),
+          category: '', material: '', mass_raw: '',
+          volume_mm3: S.vol ? S.vol.toFixed(3) : '',
+          area_mm2: S.area ? S.area.toFixed(3) : '',
+          n_vertex: String(S.vtx | 0), n_tri: String(S.tri | 0),
+          bbox: S.ext.every(v => v > 0) ? S.ext.map(v => v.toFixed(2)).join('×') : '',
+          density: '', thumb_url: '', node: o });
+      }
+      return sig;
+    }
+    /* ★子の**出現回数を数える**（これが員数。設計書 §4.1）*/
+    const cnt = new Map();
+    for (const k of kids) {
+      const s = walk(k, d + 1);
+      if (s) cnt.set(s, (cnt.get(s) || 0) + 1);
+    }
+    const list = [...cnt].map(([s, q]) => ({ sig: s, qty: q }));
+    const sig = exSigAssy(list);
+    if ((o.children || []).some(c => c.isMesh)) nAssyGeo++;
+    if (!seen[sig]) {
+      seen[sig] = 1;
+      shapes.push({ sig: sig, kind: 'assy', raw_name: exName(o),
+        category: '', material: '', mass_raw: '', volume_mm3: '', area_mm2: '',
+        n_vertex: '', n_tri: '', bbox: '', density: '', thumb_url: '', node: o });
+    }
+    /* 🔴 辺は **(親, 子) ごとに1行だけ。** 同じ組立が何か所に在っても書き足さない
+       —— plm は `EDGE` の行をそのまま入れて `occ` を積むので、**二重に数える**。
+       ★同じシグネチャなら子も同じなので、1回書けば足りる（DAG）。 */
+    for (const it of list) {
+      const k2 = sig + '>' + it.sig;
+      if (eseen[k2]) continue;
+      eseen[k2] = 1;
+      edges.push({ parent_sig: sig, child_sig: it.sig, qty: it.qty, nauo_ids: '' });
+    }
+    return sig;
+  }
+  const rootSig = walk(model, 0);
+
+  /* ★`digest` … 「前と同じ抽出か」を機械で言うための値（設計書 §4.7 / §5）。
+     🔴 **並びに依存させない**（整列してから混ぜる）。 */
+  const digest = exHash(
+    shapes.map(s => s.sig).sort().join(',') + '#' +
+    edges.map(e => e.parent_sig + '>' + e.child_sig + '×' + e.qty).sort().join(','));
+
+  const warn = [];
+  const noName = shapes.filter(s => !s.raw_name).length;
+  if (noName) warn.push('名前が無い形が ' + noName + ' 件あります（plm 側で仮番になります）');
+  if (nAssyGeo) warn.push('組立そのものが形を持つ節点が ' + nAssyGeo +
+    ' 件あります（その形はシグネチャに入りません）');
+  if (deep) warn.push('深すぎて辿らなかった節点が ' + deep + ' 件あります');
+  /* ⚠️ **材質は occt が返さない。** STEP に材質が在るのは実測 11% だが、
+     `occt-import-js` は材質を渡してこない（返るのは三角形と色だけ）。
+     ⇒ 空で書く。**黙って空にしない**（画面と plm の両方に出る）。 */
+  warn.push('材質・密度・質量は入りません（occt が返さないため。plm 側で入れてください）');
+  warn.push('nauo_ids は入りません（occt が STEP の実体番号を返さないため）');
+  if (secOn) warn.push('断面を切ったままです（サムネにも切り口が写ります）');
+
+  /* ★ルートの呼び名。⚠️ **STEP のルートは名前が無いことが多い**
+     （実測：`42AC16-A00_FWD FRAME 3…` は最上位が無名）。
+     ⇒ 無ければ**ファイル名**（拡張子なし）に倒す。plm の一覧はこれを見出しに出すので、
+       空だと `ib_…` の内部 id が並んで**何のバッチか読めない**。
+     ⚠️ でっち上げではない（ファイル名はその人が付けたモデルの名前）。 */
+  const rootName = (shapes.find(s => s.sig === rootSig) || {}).raw_name || '';
+  return { shapes: shapes, edges: edges, warn: warn,
+    meta: { src_file_id: hashId || '', src_file_name: shotName || '',
+            root_label: rootName ||
+              String(shotName || '').replace(/\.[^.]+$/, ''),
+            digest: digest } };
+}
+
+/** 取り込みファイルの中身 → シートに書く2次元配列（3枚ぶん）*/
+function exValues(pl){
+  const rows = (cols, list) =>
+    [cols].concat(list.map(r => cols.map(c => String(r[c] == null ? '' : r[c]))));
+  return {
+    SHAPE: rows(EX_SHAPE_COLS, pl.shapes),
+    EDGE:  rows(EX_EDGE_COLS, pl.edges),
+    META:  [['key', 'value']].concat(
+      ['src_file_id', 'src_file_name', 'root_label', 'digest']
+        .map(k => [k, String(pl.meta[k] == null ? '' : pl.meta[k])]))
+  };
+}
+
+/** 取り込みファイルの名前。🔴 **`STEPIN_` で始める**（plm が候補を絞る鍵）*/
+function exFileName(pl){
+  const d = new Date();
+  const z = n => ('0' + n).slice(-2);
+  const stamp = d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) +
+    '_' + z(d.getHours()) + z(d.getMinutes());
+  const label = String(pl.meta.root_label || pl.meta.src_file_name || 'model')
+    .replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+  return EX_PREFIX + label + '_' + stamp;
+}
+
+/* ── サムネ ────────────────────────────────────────────────────────
+   ★plm 側は**サムネを見ながら部番を埋める**（実測 41.8% が未採番）。
+     だから絵は「あると嬉しい」ではなく**この機能の要**。
+   ⚠️ `preserveDrawingBuffer` を付けていないので、**描いた直後に取る**
+      （次のフレームでは消えていて `toDataURL` が真っ黒になる）。
+   🔴 **カメラと表示は必ず元へ戻す。** 戻さないと、書き出しただけで
+      人が見ていた向きが変わる（何が起きたか読めない）。 */
+function exShrink(src, px){
+  const w = src.width, h = src.height;
+  const s = Math.min(px / w, px / h, 1);
+  const cv2 = document.createElement('canvas');
+  cv2.width  = Math.max(1, Math.round(w * s));
+  cv2.height = Math.max(1, Math.round(h * s));
+  cv2.getContext('2d').drawImage(src, 0, 0, cv2.width, cv2.height);
+  return cv2.toDataURL('image/png');
+}
+/** その節点だけを写した PNG（data URI）。取れなければ '' */
+function exShot(node, px){
+  const st = { pos: camera.position.clone(), tgt: controls.target.clone(),
+               up: camera.up.clone(), near: camera.near, far: camera.far };
+  /* ⚠️ **場（scene）ごと隠す。** エッジ強調の線と断面の蓋は `model` の**外**に
+     置いてあるので、`model` だけ隠すと**他の部品の線が写る**。 */
+  const vis = [];
+  scene.traverse(o => { if (o !== scene) vis.push([o, o.visible]); });
+  scene.children.forEach(o => { if (!o.isLight && !o.isCamera) o.visible = false; });
+  model.visible = true;
+  model.traverse(o => { o.visible = false; });
+  model.visible = true;
+  node.traverse(o => { o.visible = true; });
+  for (let q = node; q && q !== scene; q = q.parent) q.visible = true;
+  let uri = '';
+  try {
+    const box = new THREE.Box3().setFromObject(node);
+    if (!box.isEmpty()) {
+      const c = box.getCenter(new THREE.Vector3());
+      const r = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+      const dir = new THREE.Vector3(1, .8, 1).normalize();
+      camera.up.set(0, 1, 0);
+      camera.near = r / 500; camera.far = r * 500;
+      camera.position.copy(c).addScaledVector(dir, fitDist(box, c, dir));
+      camera.lookAt(c);
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);              /* ★描いた直後に取る */
+      uri = exShrink(renderer.domElement, px);
+    }
+  } catch (e) { uri = ''; }
+  vis.forEach(([o, v]) => { o.visible = v; });
+  camera.position.copy(st.pos); camera.up.copy(st.up);
+  camera.near = st.near; camera.far = st.far;
+  controls.target.copy(st.tgt); camera.lookAt(st.tgt);
+  camera.updateProjectionMatrix(); controls.update();
+  return uri;
+}
+
+/* ── Drive / Sheets へ書く ────────────────────────────────────────
+   🔴 **利用者自身の OAuth で書く**（GAS を通さない。設計書 §5）。
+   ⚠️ 書き込みの権限は**抽出のときだけ**求める（`authScope`）。 */
+/** 応答の中の理由を拾う（★数字だけ出すと直し方が分からない）*/
+async function exErr(r){
+  try {
+    const j = await r.json();
+    return (j && j.error && j.error.message) ? '：' + j.error.message : '';
+  } catch (e) { return ''; }
+}
+/** PNG を1枚置く。★`parents` を付けると `out` の中に入る */
+async function exUpload(name, dataUrl, tk, parent){
+  const b64 = String(dataUrl || '').split(',')[1] || '';
+  if (!b64) throw new Error('絵が空でした');
+  const meta = { name: name, mimeType: 'image/png' };
+  if (parent) meta.parents = [parent];
+  const B = 'exb' + Date.now() + Math.random().toString(16).slice(2);
+  const body = '--' + B + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(meta) + '\r\n--' + B +
+    '\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\n\r\n' +
+    b64 + '\r\n--' + B + '--';
+  const r = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+    { method: 'POST',
+      headers: { Authorization: 'Bearer ' + tk,
+                 'Content-Type': 'multipart/related; boundary=' + B },
+      body: body });
+  if (!r.ok) throw new Error('PNG を置けませんでした（' + r.status + '）' + (await exErr(r)));
+  return (await r.json()).id;
+}
+/** 取り込みファイル（スプレッドシート）を作って中身を書く */
+async function exSheet(pl, tk){
+  const title = exFileName(pl);
+  const hd = { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/json' };
+  const cr = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    method: 'POST', headers: hd,
+    body: JSON.stringify({ properties: { title: title },
+      sheets: ['SHAPE', 'EDGE', 'META'].map(t => ({ properties: { title: t } })) }) });
+  if (!cr.ok)
+    throw new Error('スプレッドシートを作れませんでした（' + cr.status + '）' + (await exErr(cr)));
+  const sid = (await cr.json()).spreadsheetId;
+  const v = exValues(pl);
+  /* 🔴 **`valueInputOption` は `RAW`。** `USER_ENTERED` だと `sig`（16進の並び）が
+     **数値として解釈され、指数表記に化ける**（設計書 §5 の注意そのもの）。 */
+  const up = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' +
+      encodeURIComponent(sid) + '/values:batchUpdate', {
+    method: 'POST', headers: hd,
+    body: JSON.stringify({ valueInputOption: 'RAW', data: [
+      { range: "'SHAPE'!A1", values: v.SHAPE },
+      { range: "'EDGE'!A1",  values: v.EDGE  },
+      { range: "'META'!A1",  values: v.META  } ] }) });
+  if (!up.ok)
+    throw new Error('中身を書けませんでした（' + up.status + '）' + (await exErr(up)));
+  return { id: sid, title: title };
+}
+/** `out` のフォルダへ移す。★移せなくても**投げない**（作れた事実は残す）*/
+async function exMove(sid, out, tk){
+  if (!out) return { moved: false, why: '書き先（out）が渡されていません' };
+  const hd = { Authorization: 'Bearer ' + tk };
+  const g = await fetch('https://www.googleapis.com/drive/v3/files/' +
+    encodeURIComponent(sid) + '?fields=parents', { headers: hd });
+  if (!g.ok) return { moved: false, why: '（' + g.status + '）' + (await exErr(g)) };
+  const par = ((await g.json()).parents || []).join(',');
+  const r = await fetch('https://www.googleapis.com/drive/v3/files/' +
+    encodeURIComponent(sid) + '?addParents=' + encodeURIComponent(out) +
+    (par ? '&removeParents=' + encodeURIComponent(par) : '') + '&fields=id',
+    { method: 'PATCH', headers: hd });
+  if (!r.ok) return { moved: false, why: '（' + r.status + '）' + (await exErr(r)) };
+  return { moved: true };
+}
+
+/* ── 画面 ──────────────────────────────────────────────────────── */
+let exBusy = false, exStop = false, exLast = null;
+
+/** 何を書き出すのかを先に見せる。★押す前に件数と欠けが読める */
+function exPanel(){
+  if (!model) { log('先にモデルを読んでください', 'wa'); return; }
+  const pl = exBuild();
+  if (!pl) { log('✗ モデルから形を読めませんでした', 'ng'); return; }
+  exLast = pl;
+  const nA = pl.shapes.filter(s => s.kind === 'assy').length;
+  const occ = pl.edges.reduce((a, e) => a + e.qty, 0);
+  phSay('<b>取り込みファイルを書き出します</b><span>' +
+    '形 <b>' + pl.shapes.length + '</b>（組立 ' + nA + ' / 部品 ' +
+      (pl.shapes.length - nA) + '）　辺 <b>' + pl.edges.length +
+      '</b>　配置 <b>' + occ + '</b><br>' +
+    '書き先：' + (exOut
+      ? '<code style="font-family:var(--mono)">' + esc(exOut) + '</code>'
+      : '<b>指定されていません</b>（My Drive に作られます）') + '<br>' +
+    '<label style="display:inline-flex;gap:6px;align-items:center">' +
+      '<input type="checkbox" id="exth" checked>サムネを作る（最大 ' +
+      EX_THUMB_MAX + ' 枚・あとで中止できます）</label><br>' +
+    pl.warn.map(w => '⚠️ ' + esc(w)).join('<br>') +
+    '<br><button class="pri" id="exgo">書き出す</button>' +
+    ' <button id="exno">閉じる</button></span>');
+  document.getElementById('exgo').onclick = exGo;
+  document.getElementById('exno').onclick = () => {
+    document.getElementById('ph').style.display = 'none';
+  };
+}
+
+/** 書き出す本体 */
+async function exGo(){
+  if (exBusy) return;
+  exBusy = true; exStop = false;
+  const th = document.getElementById('exth');
+  const wantTh = !!(th && th.checked);
+  document.getElementById('ph').style.display = 'none';
+  ftFold(false);                            /* ★経過はログに出る。開いておく */
+  try {
+    const pl = exLast || exBuild();
+    if (!pl) throw new Error('モデルから形を読めませんでした');
+    log('抽出：形 <b>' + pl.shapes.length + '</b>　辺 <b>' + pl.edges.length +
+        '</b>　digest <code style="font-family:var(--mono)">' + pl.meta.digest + '</code>');
+    if (!CFG.CLIENT_ID) throw new Error('クライアントIDが設定されていません（config.js）');
+    if (!CFG.SCOPE_WRITE)
+      throw new Error('書き込みの権限が設定されていません（config.js の SCOPE_WRITE）');
+    const tk = await getToken();
+
+    /* ① サムネ（★失敗しても書き出しは止めない）*/
+    if (wantTh) {
+      const list = pl.shapes.slice(0, EX_THUMB_MAX);
+      const cut = pl.shapes.length - list.length;
+      log('サムネを作ります（' + list.length + ' 枚' +
+          (cut ? ' / 上限で ' + cut + ' 枚は作りません' : '') +
+          '）　<button id="exstop">中止する</button>');
+      const sb = document.getElementById('exstop');
+      if (sb) sb.onclick = () => { exStop = true; };
+      let ok = 0, ng = 0, said = false;
+      for (let i = 0; i < list.length; i++) {
+        if (exStop) { log('■ サムネを中止しました（' + ok + ' 枚まで）', 'wa'); break; }
+        const s = list[i];
+        const uri = exShot(s.node, EX_THUMB_PX);
+        if (!uri) { ng++; continue; }
+        try {
+          const id = await exUpload((s.raw_name || s.sig) + '.png', uri, tk, exOut);
+          s.thumb_url = 'https://drive.google.com/file/d/' + id + '/view';
+          ok++;
+        } catch (e) {
+          ng++;
+          /* ⚠️ 同じ理由を何十行も積まない（最初の1回だけ出す）*/
+          if (!said) { said = true; log('⚠️ ' + esc(e && e.message || e), 'wa'); }
+        }
+        /* ★同じ行を書き換える（何百行も積まない）＋ 画面を止めない */
+        lines[lines.length - 1] = 'サムネ ' + (i + 1) + ' / ' + list.length +
+          '　<button id="exstop">中止する</button>';
+        logEl.innerHTML = lines.join('\n'); logEl.scrollTop = 1e6;
+        const sb2 = document.getElementById('exstop');
+        if (sb2) sb2.onclick = () => { exStop = true; };
+        await new Promise(r => setTimeout(r, 0));
+      }
+      log('サムネ ' + ok + ' 枚' + (ng ? '　✗ 失敗 ' + ng + ' 枚' : ''), ok ? 'ok' : 'wa');
+    }
+
+    /* ② 取り込みファイル */
+    const sh = await exSheet(pl, tk);
+    const mv = await exMove(sh.id, exOut, tk);
+    const url = 'https://docs.google.com/spreadsheets/d/' + sh.id + '/edit';
+    const link = '<a href="' + url + '" target="_blank" rel="noopener">' +
+      esc(sh.title) + '</a>';
+    if (mv.moved) {
+      log('✓ 書き出しました　' + link, 'ok');
+      phSay('<b>書き出しました</b><span>' + link + '<br>' +
+        'plm の「STEP取り込み」→ <b>取り込みファイルを読む</b> から選べます。' +
+        '<br><button id="exno2">閉じる</button></span>');
+    } else {
+      /* 🔴 **行き止まりにしない。** 作れてはいるので、在り処と直し方を出す。
+         ⚠️ **「plm からは見えない」ことを必ず言う**（黙ると
+            「書き出したのに出てこない」になる）。 */
+      log('⚠️ 作れましたが、指定のフォルダへ移せませんでした' + esc(mv.why || ''), 'wa');
+      phSay('<b>My Drive に作りました（まだ plm からは見えません）</b><span>' +
+        link + '<br>指定のフォルダへ移せませんでした' + esc(mv.why || '') + '<br>' +
+        '★このファイルを Drive で<b>取り込みフォルダへ移すと</b> plm から選べます' +
+        (exOut ? '（<code style="font-family:var(--mono)">' + esc(exOut) +
+                 '</code>）' : '') +
+        '<br><button id="exno2">閉じる</button></span>');
+    }
+    const b2 = document.getElementById('exno2');
+    if (b2) b2.onclick = () => { document.getElementById('ph').style.display = 'none'; };
+  } catch (e) {
+    const m = (e && e.message) ? e.message : String(e);
+    log('✗ ' + esc(m), 'ng');
+    phSay('<b>書き出せませんでした</b><span>' + esc(m) +
+      '<br><button class="pri" id="exre">もう一度</button>' +
+      ' <button id="exno3">閉じる</button></span>');
+    const rb = document.getElementById('exre');
+    if (rb) rb.onclick = exPanel;
+    const nb = document.getElementById('exno3');
+    if (nb) nb.onclick = () => { document.getElementById('ph').style.display = 'none'; };
+  } finally {
+    exBusy = false;
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    ローカルでの動作確認の口
    ══════════════════════════════════════════════════════════════════════
@@ -5750,6 +6313,9 @@ if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
     occtInWorker, occtAbort, occtParamsFor, OCCT_LV,
     get occtLv(){ return occtLv; }, set occtLv(v){ occtLv = v; },
     exClosure, exWrite, exRun, cutRender,
+    /* ★STEP 取り込みの抽出を**書き込みなしで**試せるようにする
+       （`exBuild()` は Drive を触らない。`exValues()` は書く配列を返すだけ）*/
+    exBuild, exValues, exFileName, exStat, exSigPart, exSigAssy, exEig3, exHash,
     get cutPath(){ return cutPath; }, set cutPath(v){ cutPath = v; },
     /* ★吸い付きの印の確認用（ふだんは pointermove → rAF 経由で呼ばれる。
          ⚠️ 隠れたタブでは rAF が止まるので、確認はここから直に叩く） */

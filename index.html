@@ -5606,7 +5606,7 @@ async function openDrive(id){
       return;
     }
     const info = await meta.json();
-    log('ファイル：' + info.name + '　' + (info.size ? mb(+info.size) : 'サイズ不明'));
+    log('ファイル：' + esc(info.name) + '　' + (info.size ? mb(+info.size) : 'サイズ不明'));
     const kind = kindOf(info.name);
     if (!kind) {
       driveOut(id, 'この形式は回せません（' + info.name + '）');

@@ -5411,6 +5411,119 @@ async function open(file){
   }
 }
 
+/* ══ URL から直接読む（Drive を通さない置き場）════════════════
+   ★`#url=` で渡された置き場から `fetch` して、**「選ぶ」と同じ `draw` に流す**。
+     ⇒ plm-sql（NAS / AWS）が自分で配るファイルを、**Google の設定ゼロ**で読める。
+   🔴 **Drive の道（`#id=`）は1文字も変えない。** あちらは Google の許可が要り、
+      許可は**生成元ごと**に登録する。`http://` の置き場（NAS）は登録できないので、
+      置き場が自分で配る道を**別に**持つ ——— それがこの関数の理由。
+   ⚠️ **相対パスで渡すのが本筋**（`#url=/api/file/xxx`）。同じ生成元なので
+      Cookie がそのまま乗り、CORS も要らない。絶対 URL も通すが、別の生成元なら
+      置き場側が CORS を返していないとブラウザが読ませない（そう言う）。
+   ⚠️ **スキームは http / https だけ**（`javascript:` `data:` `file:` は通さない）。
+      外から来た文字列をそのまま `fetch` に渡さないため。 */
+/** 通していい URL だけを絶対 URL にして返す。通せないものは空文字。 */
+function urlSafe(raw){
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  let u;
+  try { u = new URL(s, location.href); } catch (e) { return ''; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+  return u.href;
+}
+/** URL からファイル名を拾う（拡張子だけが読める形かの手掛かり）。★`name=` が在ればそちら */
+function urlName(u){
+  try {
+    const p = new URL(u, location.href).pathname;
+    return decodeURIComponent(p.split('/').filter(Boolean).pop() || '');
+  } catch (e) { return ''; }
+}
+/** 読めなかったときの枠。★Drive の `driveOut` と同じ役目（逃がし先が違うだけ）*/
+function urlOut(u, why){
+  const a = '<a href="' + esc(u) + '" target="_blank" rel="noopener">URL を開く</a>';
+  log(why + '　→ ' + a, 'ng');
+  phSay('<b>このページでは開けません</b><span>' + why +
+    '<br><a class="drvout" href="' + esc(u) + '" target="_blank" rel="noopener">URL を開く</a>' +
+    '<br>回せるのは <code style="font-family:var(--mono)">.stp .step .igs .iges .glb .gltf</code>' +
+    ' です</span>');
+}
+async function openUrl(raw, nm){
+  if (busy) return;
+  const u = urlSafe(raw);
+  if (!u) {
+    /* ⚠️ 黙って白くしない。**何なら通るか**を書く */
+    log('✗ この URL は読めません（http / https だけを通します）', 'ng');
+    phSay('<b>この URL は読めません</b><span>通すのは ' +
+      '<code style="font-family:var(--mono)">http</code> と ' +
+      '<code style="font-family:var(--mono)">https</code> だけです。</span>');
+    return;
+  }
+  busy = true;
+  document.getElementById('pick').disabled = true;
+  lines = []; log('URL から読みます：' + esc(u));
+  document.getElementById('ph').style.display = 'none';
+  const name = String(nm || '').trim() || urlName(u);
+  try {
+    const kind = kindOf(name);
+    if (!kind) {
+      /* 🔴 **拡張子が無いときと、拡張子が違うときを同じ文言にしない**（直し方が違う）。
+         ⚠️ `/api/file/123` のように**名前を持たない道**で配ると、ここに落ちる。
+            そのとき要るのは「別のファイルを選ぶ」ではなく **`name=` を足すこと**。 */
+      urlOut(u, /\.[a-z0-9]{1,5}$/i.test(name)
+        ? 'この形式は回せません（' + esc(name) + '）'
+        : 'この URL からは拡張子が読み取れませんでした（' + esc(name || u) +
+          '）。<code style="font-family:var(--mono)">name=部品A.stp</code> の形で' +
+          'ファイル名を渡してください');
+      return;
+    }
+    /* ★読んだファイルの名前を覚える（絵と GLB の名前に使う。`#id=` と同じ扱い）*/
+    shotName = name;
+    /* ★大きさは**落とす前に**見る（Drive と同じ `sizeGate` を通す）。
+       ⚠️ `HEAD` を通さない置き場も在るので、**失敗したら黙って進む**
+          （ここで止めると、読めるはずのものが読めなくなる）。 */
+    let size = 0;
+    try {
+      const hd = await fetch(u, { method: 'HEAD' });
+      if (hd.ok) size = Number(hd.headers.get('content-length')) || 0;
+    } catch (e) { size = 0; }
+    log('ファイル：' + esc(name) + '　' + (size ? mb(size) : 'サイズ不明'));
+    if (size && !sizeGate(size, name)) {
+      document.getElementById('ph').style.display = '';
+      return;
+    }
+    const t0 = performance.now();
+    log('ダウンロード中…（★ブラウザには残りません。失敗しても開き直すと落ち直します）');
+    const r = await fetch(u);
+    if (!r.ok) {
+      /* ⚠️ 401 / 403 と 404 を同じ文言にしない（直し方が違う）*/
+      urlOut(u, (r.status === 401 || r.status === 403)
+        ? '✗ この置き場から読む権限がありません（' + r.status + '）'
+        : r.status === 404
+          ? '✗ ファイルが見つかりません（URL が違う／消えている）'
+          : '✗ ダウンロードできませんでした（' + r.status + '）');
+      return;
+    }
+    const buf = new Uint8Array(await r.arrayBuffer());
+    log('✓ ダウンロード完了　' + sec(performance.now() - t0) + '　' + mb(buf.length), 'ok');
+    /* ★描く所は「選ぶ」「Drive」と同じ1本を通す（実装を3つ持たない）*/
+    await draw(buf, kind, t0);
+  } catch (e) {
+    /* ⚠️ 別の生成元で CORS が無いとここに来る（`TypeError: Failed to fetch`）。
+       **「読めなかった」で終わらせず、何を直せばいいかまで言う。** */
+    const m = (e && e.message) ? e.message : String(e);
+    urlOut(u, '✗ ' + esc(m));
+    let cross = false;
+    try { cross = (new URL(u, location.href).origin !== location.origin); } catch (x) { cross = false; }
+    if (cross)
+      log('　★この URL は**別の置き場**です。置き場側が CORS を返していないと' +
+          'ブラウザが読ませません（同じ置き場から配るなら ' +
+          '<code style="font-family:var(--mono)">#url=/api/…</code> の形で渡せます）', 'wa');
+  } finally {
+    busy = false;
+    document.getElementById('pick').disabled = false;
+  }
+}
+
 /* ── 入口 ─────────────────────────────────────────────────── */
 const f = document.getElementById('f'), ph = document.getElementById('ph');
 document.getElementById('pick').onclick = () => f.click();
@@ -5433,6 +5546,11 @@ let hashId = (location.hash.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1]
 /* ★誰が開いているか（plm-gas が渡す）。**アカウント選択を出さないため**に使う。
    ⚠️ `#` の後ろなのでサーバには送られない。⚠️ 無くても動く（選択が出るだけ）。 */
 let hashHint = decodeURIComponent((location.hash.match(/(?:^|[#&])hint=([^&]+)/) || [])[1] || '');
+/* ★`#url=` は **Drive を通さない置き場**から読む道（下の `openUrl`）。
+   ⚠️ `#` の後ろなのでサーバには送られない。⚠️ `#id=` が在ればそちらを優先する。
+   ⚠️ `name=` は**拡張子を知るため**に要る（`/api/file/123` のような道は名前を持たない）。 */
+let hashUrl  = decodeURIComponent((location.hash.match(/(?:^|[#&])url=([^&]+)/) || [])[1] || '');
+let hashName = decodeURIComponent((location.hash.match(/(?:^|[#&])name=([^&]+)/) || [])[1] || '');
 /* ══ STEP 取り込み（plm-gas の「STEP取り込み」から開かれたとき）════════════
    契約は plm-gas の `docs/design/step-import.md` §5「境目の形」：
      `#mode=extract&id=<STEPのfileId>&out=<書く先のfolderId>&hint=<メール>`
@@ -5795,6 +5913,18 @@ if (CFG.CLIENT_ID) {
   log('⚠️ #id= で Drive のファイルを指定されましたが、まだ読めません', 'wa');
   log('　Drive から読むには OAuth のクライアントIDが要ります（config.js が空です）。');
   log('　いまは「ファイルを選ぶ」から端末のファイルを選んでください。');
+}
+
+/* ══ `#url=` で来た（Drive を通さない置き場）════════════════════
+   🔴 **`if (CFG.CLIENT_ID)` の外に置く。** この道は Google を一切使わないので、
+      クライアントIDが空でも動かないといけない（NAS / AWS がこちら）。
+   ⚠️ **タップを待たない。** ポップアップも同意も出ないので、待つ理由が無い。
+   ⚠️ `hashchange` では拾わない（`#id=` と同じ。読み直しは実測 338〜512秒）。 */
+if (hashUrl && hashId) {
+  log('⚠️ #id= と #url= の両方が渡されました。#id=（Drive）を使います', 'wa');
+} else if (hashUrl) {
+  document.getElementById('pick').classList.remove('pri');
+  openUrl(hashUrl, hashName);
 }
 
 /* ══ `#` を書き換えたときも見直す（`hashchange`）══════════════════════

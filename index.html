@@ -5599,7 +5599,27 @@ let reauthed = false;      /* ★401 での取り直しは1回だけ（飛び続
       履歴・共有に残さない。
    ⚠️ **`REDIRECT_URI` は Google Cloud に登録した文字列と1文字も違えられない。**
       違うと Google のエラー画面が出る（こちらには戻ってこないので拾えない）。 */
-const REDIR = CFG.REDIRECT_URI || '';
+/* 🔴 **戻り先は「いま開いているページ」に合わせる**（2026-09-30）。
+   ⚠️ `config.js` の `REDIRECT_URI` は GitHub Pages 固定だったので、
+      **別の置き場（社内の PLM・NAS）に同じファイルを置いて開くと、
+      許可の往復から GitHub Pages へ戻ってしまい、元のページに帰ってこなかった。**
+      ⇒ 「NAS のビューアで Drive を開く」が成立しない。
+   ★決め方はこう：
+     ① 設定の `REDIRECT_URI` が**いま開いている生成元と同じ**ならそれを使う
+        （末尾の `/` まで含めて Google に登録済みの文字列を尊重する）
+     ② 違うなら**このページ自身の URL**（`origin + pathname`）を使う
+     ③ `REDIRECT_URI` が空なら従来どおり空＝ポップアップ方式に落ちる
+   ⚠️ **②で使う文字列も Google Cloud の「承認済みのリダイレクト URI」に
+      登録されていないと弾かれる**（登録は置き場ごとに要る。1文字でも違うと
+      Google のエラー画面が出て、こちらには戻ってこない）。
+   ★`pathname` をそのまま使う（`/viewer/index.html` と `/viewer/` は**別物**）。
+     ⚠️ 配る側がフォルダ指定を index.html に倒さないと、戻り先が 404 になる。 */
+const REDIR = (function(){
+  const c = String(CFG.REDIRECT_URI || '');
+  if (!c) return '';
+  try { if (new URL(c).origin === location.origin) return c; } catch (e) { return c; }
+  return location.origin + location.pathname;
+})();
 function b64u(o){
   return btoa(JSON.stringify(o)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }

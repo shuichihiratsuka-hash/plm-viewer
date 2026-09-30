@@ -203,6 +203,32 @@ function stage(opt) {
     say(/if \(!nEx && !exMode\) return;/.test(SRC), '⑫ hashchange の素通りを残している');
   }
 
+  /* ══ ⑬ 戻り先（REDIRECT_URI）が「いま開いている置き場」に合うか ══
+     🔴 設定は GitHub Pages 固定だったので、NAS に同じファイルを置いて開くと
+        許可の往復から**GitHub Pages へ戻って**しまい、元のページに帰れなかった。 */
+  {
+    const src = SRC.slice(SRC.indexOf('const REDIR = (function(){'));
+    const body = src.slice(0, src.indexOf('})();') + 5);
+    const run = (cfg, origin, pathname) => {
+      const location = { origin, pathname };
+      const URLc = global.URL;
+      const CFG = { REDIRECT_URI: cfg };
+      return eval('(function(CFG, location, URL){ ' +
+        body.replace('const REDIR =', 'return') + ' })')(CFG, location, URLc);
+    };
+    const GH = 'https://shuichihiratsuka-hash.github.io/plm-viewer/';
+    say(run(GH, 'https://shuichihiratsuka-hash.github.io', '/plm-viewer/') === GH,
+      '⑬ 同じ置き場なら設定の文字列をそのまま使う（末尾の / まで）');
+    say(run(GH, 'https://nas.tail1a2b3c.ts.net', '/viewer/index.html')
+        === 'https://nas.tail1a2b3c.ts.net/viewer/index.html',
+      '⑬ 🔴 別の置き場なら、そのページ自身へ戻す');
+    say(run('', 'https://nas.tail1a2b3c.ts.net', '/viewer/index.html') === '',
+      '⑬ 設定が空なら空のまま（ポップアップ方式に落ちる）');
+    say(run(GH, 'https://nas.tail1a2b3c.ts.net', '/viewer/')
+        === 'https://nas.tail1a2b3c.ts.net/viewer/',
+      '⑬ /viewer/ と /viewer/index.html を混ぜない（別物として扱う）');
+  }
+
   console.log(ng ? '\n🔴 NG ' + ng + ' 件' : '\n✅ 全部通った');
   process.exit(ng ? 1 : 0);
 })();

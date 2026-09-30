@@ -5542,7 +5542,39 @@ addEventListener('drop', e => {
       権限を持っていなければ 403 になる。このページは権限を足さない。
    ⚠️ トークンは**この場だけ**（変数に持つだけ。保存しない）。 */
 const CFG = (window.VIEWER_CONFIG || {});
-let hashId = (location.hash.match(/(?:^|[#&])id=([a-zA-Z0-9_-]{10,})/) || [])[1] || '';
+/** 🔴 **Drive の「ファイル ID」を取り出す。貼られた URL をそのまま受ける。**
+   ⚠️ 2026-09-30、本人が実機で踏んだ：
+      `…/file/d/1qKs9…Pfv6P/view?usp=drive_link` を渡すと **`drive_link`** を
+      ID として読んでいた（Drive は 404 を返す）。
+      原因は「10文字以上の塊を拾って**2つ目**を採る」という当て推量。
+      `?usp=drive_link` の `drive_link` がちょうど10文字で2つ目に来る。
+   ⇒ **当て推量をやめ、plm-gas の `_driveFileId` と同じ形で読む**（道の形で決める）。
+   ★最後の逃げ道は「**一番長い塊**」。Drive の ID は 25文字以上なので、
+     `drive_link`（10）や `spreadsheets`（12）には当たらない。
+   ⚠️ **裸の ID もそのまま通す**（plm-gas はこちらを渡してくる）。 */
+function driveIdOf(raw){
+  var u = String(raw || '').trim();
+  if (!u) return '';
+  try { u = decodeURIComponent(u); } catch (e) {}
+  /* ★裸の ID（plm-gas が渡す形）*/
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(u)) return u;
+  var m = u.match(/\/(?:file|document|spreadsheets|presentation|forms)\/d\/([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  m = u.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  m = u.match(/\/d\/([a-zA-Z0-9_-]{10,})/);            /* 汎用の /d/<id> */
+  if (m) return m[1];
+  m = u.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);           /* 旧い uc?id= 形式 */
+  if (m) return m[1];
+  /* ★どの形にも当たらない ⇒ **一番長い塊**を採る（2つ目を採らない）*/
+  var all = u.match(/[a-zA-Z0-9_-]{20,}/g);
+  if (!all) return '';
+  return all.sort(function(a, b){ return b.length - a.length; })[0];
+}
+/* ⚠️ **`&` まで**を拾ってから `driveIdOf` に通す。
+   ★こうすると `#id=<裸のID>`（plm-gas）と `#id=<Drive の URL 丸ごと>`（人が貼る）の
+     **両方**が通る。前は前者しか通らず、後者は黙って別のものを読んでいた。 */
+let hashId = driveIdOf((location.hash.match(/(?:^|[#&])id=([^&]+)/) || [])[1] || '');
 /* ★誰が開いているか（plm-gas が渡す）。**アカウント選択を出さないため**に使う。
    ⚠️ `#` の後ろなのでサーバには送られない。⚠️ 無くても動く（選択が出るだけ）。 */
 let hashHint = decodeURIComponent((location.hash.match(/(?:^|[#&])hint=([^&]+)/) || [])[1] || '');
@@ -5875,10 +5907,15 @@ if (CFG.CLIENT_ID) {
   const b = document.getElementById('drv');
   b.style.display = '';
   b.onclick = () => {
-    const id = hashId || (prompt('Drive のファイルID か 共有URL を貼ってください') || '');
-    const m = String(id).match(/[a-zA-Z0-9_-]{10,}/g);
-    if (!m) { log('✗ ファイルIDが読み取れませんでした', 'ng'); return; }
-    openDrive(m[m.length > 1 ? 1 : 0]);
+    const raw = hashId || (prompt('Drive のファイルID か 共有URL を貼ってください') || '');
+    /* 🔴 **読み取りは `driveIdOf` の1本**（上のコメント。当て推量をここに戻さない）*/
+    const id = driveIdOf(raw);
+    if (!id) {
+      log('✗ ファイルIDが読み取れませんでした', 'ng');
+      log('　貼るのは Drive の共有リンク（…/file/d/<ID>/view）か、ID そのものです。');
+      return;
+    }
+    openDrive(id);
   };
   /* ══ ここが入口の分岐 ══════════════════════════════════════════
      ① Google から戻ってきた（`#access_token=` か `#error=`）→ トークンを取って読む

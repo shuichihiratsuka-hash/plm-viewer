@@ -229,6 +229,32 @@ function stage(opt) {
       '⑬ /viewer/ と /viewer/index.html を混ぜない（別物として扱う）');
   }
 
+  /* ══ ⑭ Drive の ID の読み取り（🔴 2026-09-30 に本人が実機で踏んだ）══
+     `…/file/d/1qKs9…/view?usp=drive_link` から **`drive_link`** を ID として
+     読んでいた（「10文字以上の塊の**2つ目**」という当て推量）。Drive は 404 を返す。 */
+  {
+    const s2 = stage();
+    vm.runInContext(grab('driveIdOf'), s2.ctx);
+    const id = (u) => vm.runInContext('driveIdOf(' + JSON.stringify(u) + ')', s2.ctx);
+    const REAL = '1qKs9lqisKHzsLzbiYQV4mxn3kfsPfv6P';
+    say(id('https://drive.google.com/file/d/' + REAL + '/view?usp=drive_link') === REAL,
+      '⑭ 🔴 共有リンク（?usp=drive_link 付き）から ID を取る');
+    say(id('https://drive.google.com/file/d/' + REAL + '/view') === REAL,
+      '⑭ 素の共有リンク');
+    say(id(REAL) === REAL, '⑭ 裸の ID はそのまま（plm-gas はこれを渡す）');
+    say(id(encodeURIComponent(REAL)) === REAL, '⑭ URL エンコードを戻す');
+    say(id('https://docs.google.com/spreadsheets/d/' + REAL + '/edit#gid=0') === REAL,
+      '⑭ スプレッドシートの形');
+    say(id('https://drive.google.com/drive/folders/' + REAL) === REAL, '⑭ フォルダの形');
+    say(id('https://drive.google.com/uc?id=' + REAL + '&export=download') === REAL,
+      '⑭ 旧い uc?id= の形');
+    say(id('') === '' && id('  ') === '', '⑭ 空は空');
+    say(id('https://example.com/nothing/here') === '', '⑭ 当たらなければ空（嘘の ID を作らない）');
+    /* 🔴 「2つ目を採る」に戻っていないこと */
+    say(id('https://drive.google.com/file/d/' + REAL + '/view?usp=drive_link') !== 'drive_link',
+      '⑭ 🔴 drive_link を ID として読まない');
+  }
+
   console.log(ng ? '\n🔴 NG ' + ng + ' 件' : '\n✅ 全部通った');
   process.exit(ng ? 1 : 0);
 })();
